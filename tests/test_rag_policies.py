@@ -274,3 +274,4 @@ def test_multilingual_english_and_spanish_policy_queries(retriever: PolicyRetrie
 
     es_res = retriever.search("¿Cuál es la política de devolución, cambio y reembolso?", top_k=2)
     assert es_res[0]["section_number"] == 4
+

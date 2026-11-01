@@ -20,11 +20,11 @@ def agent_db(tmp_path: Path) -> Path:
 
 
 def test_model_fallback_chain_order_qwen_primary(agent_db: Path) -> None:
-    """Verify that qwen/qwen3-32b is the primary LLM model followed by Llama fallbacks."""
+    """Verify that Qwen (qwen/qwen3.8-27b) is the primary LLM model followed by fallbacks."""
     agent = AssistantAgent(db_path=agent_db)
-    assert agent.model_chain[0] == "qwen/qwen3-32b"
-    assert agent.model_chain[1] == "llama-3.3-70b-versatile"
-    assert agent.model_chain[2] == "llama-3.1-8b-instant"
+    assert agent.model_chain[0] == "qwen/qwen3.8-27b"
+    assert agent.model_chain[1] == "openai/gpt-oss-120b"
+    assert agent.model_chain[2] == "openai/gpt-oss-20b"
 
 
 def test_clean_thinking_tags() -> None:
@@ -100,7 +100,7 @@ def test_tool_executor_ambiguous_customer_disambiguation(agent_db: Path) -> None
 
 
 def test_llm_fallback_mechanism_on_primary_failure(agent_db: Path) -> None:
-    """Verify that if primary model (qwen/qwen3-32b) raises an error, fallback model is used."""
+    """Verify that if primary model (qwen/qwen3.8-27b) raises an error, fallback model is used."""
     agent = AssistantAgent(db_path=agent_db)
 
     mock_client = MagicMock()
@@ -109,7 +109,7 @@ def test_llm_fallback_mechanism_on_primary_failure(agent_db: Path) -> None:
     def side_effect(**kwargs):
         model = kwargs["model"]
         call_models.append(model)
-        if model == "qwen/qwen3-32b":
+        if model == "qwen/qwen3.8-27b":
             raise RuntimeError("Simulated rate limit on primary model")
         mock_resp = MagicMock()
         mock_msg = MagicMock()
@@ -122,6 +122,6 @@ def test_llm_fallback_mechanism_on_primary_failure(agent_db: Path) -> None:
     agent.client = mock_client
 
     result = agent.run("Olá, bom dia!", session_id="test_fallback")
-    assert call_models == ["qwen/qwen3-32b", "llama-3.3-70b-versatile"]
-    assert result["model_used"] == "llama-3.3-70b-versatile"
+    assert call_models == ["qwen/qwen3.8-27b", "openai/gpt-oss-120b"]
+    assert result["model_used"] == "openai/gpt-oss-120b"
     assert "Empório da Música" in result["reply"]

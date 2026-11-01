@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 import re
+import time
 from typing import Any, Dict, List, Optional
 from groq import Groq
 
@@ -140,22 +141,27 @@ class AssistantAgent:
         last_error: Optional[Exception] = None
 
         for model_name in self.model_chain:
-            try:
-                kwargs: Dict[str, Any] = {
-                    "model": model_name,
-                    "messages": messages,
-                    "temperature": temp,
-                    "max_tokens": 1500,
-                }
-                if tools:
-                    kwargs["tools"] = tools
-                    kwargs["tool_choice"] = "auto"
+            for attempt in range(2):
+                try:
+                    kwargs: Dict[str, Any] = {
+                        "model": model_name,
+                        "messages": messages,
+                        "temperature": temp,
+                        "max_tokens": 1100,
+                    }
+                    if tools:
+                        kwargs["tools"] = tools
+                        kwargs["tool_choice"] = "auto"
 
-                response = self.client.chat.completions.create(**kwargs)
-                return response, model_name
-            except Exception as exc:
-                last_error = exc
-                continue
+                    response = self.client.chat.completions.create(**kwargs)
+                    return response, model_name
+                except Exception as exc:
+                    last_error = exc
+                    err_str = str(exc).lower()
+                    if ("429" in err_str or "413" in err_str or "rate_limit" in err_str) and attempt == 0:
+                        time.sleep(2.5)
+                        continue
+                    break
 
         raise RuntimeError(f"All LLM models in fallback chain failed. Last error: {last_error}")
 
@@ -312,3 +318,4 @@ class AssistantAgent:
             "tools_called": tools_called_log,
             "logged_failed_intent": False,
         }
+

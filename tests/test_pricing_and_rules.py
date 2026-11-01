@@ -172,3 +172,4 @@ def test_failed_intent_repository_logging(seeded_db: Path) -> None:
     assert len(logs) == 1
     assert logs[0]["session_id"] == "sess-123"
     assert logs[0]["reason"] == "ambiguous_intent"
+

@@ -16,12 +16,12 @@ def api_client(tmp_path: Path) -> TestClient:
 
 
 def test_health_endpoint_reports_qwen_primary(api_client: TestClient) -> None:
-    """Verify /api/health returns status ok and qwen/qwen3-32b as primary model."""
+    """Verify /api/health returns status ok and qwen/qwen3.8-27b as primary model."""
     res = api_client.get("/api/health")
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "ok"
-    assert data["primary_model"] == "qwen/qwen3-32b"
+    assert data["primary_model"] == "qwen/qwen3.8-27b"
 
 
 def test_web_ui_html_served(api_client: TestClient) -> None:

@@ -80,3 +80,4 @@ def test_idempotent_ingestion(temp_db: Path) -> None:
     counts_second_run = ingest_all_csvs(db_path=temp_db, force_reload=False)
     assert counts_second_run["products"] == 65
     assert counts_second_run["order_items"] == 22
+

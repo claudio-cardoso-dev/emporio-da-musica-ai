@@ -12,9 +12,9 @@ class Settings(BaseSettings):
     """Centralized configuration loaded from environment variables or .env file."""
 
     groq_api_key: str = ""
-    primary_model: str = "qwen/qwen3-32b"
-    fallback_model_1: str = "llama-3.3-70b-versatile"
-    fallback_model_2: str = "llama-3.1-8b-instant"
+    primary_model: str = "qwen/qwen3.8-27b"
+    fallback_model_1: str = "openai/gpt-oss-120b"
+    fallback_model_2: str = "openai/gpt-oss-20b"
     llm_temperature: float = 0.1
 
     openai_api_key: str = ""

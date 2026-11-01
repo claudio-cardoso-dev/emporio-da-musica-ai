@@ -318,9 +318,21 @@ class ToolExecutor:
 
         alternatives = []
         if not product["in_stock"]:
-            alternatives = self.product_repo.get_alternatives_for_unavailable(
+            raw_alts = self.product_repo.get_alternatives_for_unavailable(
                 product["product_id"], limit=3
             )
+            alternatives = [
+                {
+                    "product_id": a["product_id"],
+                    "name": a["name"],
+                    "price_brl": a["price_brl"],
+                    "effective_price_brl": a["effective_price_brl"],
+                    "pix_price_brl": a["pix_price_brl"],
+                    "stock_quantity": a["stock_quantity"],
+                    "status": a["status"],
+                }
+                for a in raw_alts
+            ]
 
         return {
             "found": True,
@@ -417,3 +429,4 @@ class ToolExecutor:
             "query": query,
             "matched_sections": sections,
         }
+

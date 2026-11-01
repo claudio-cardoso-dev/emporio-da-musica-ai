@@ -121,3 +121,4 @@ SYSTEM_PROMPT = """You are the official Virtual Assistant of **Empório da Músi
 - **Ambiguity:** If a customer makes an ambiguous request (e.g., "Quero comprar um Yamaha" when there are acoustic guitars, basses, drums, and keyboards; or "Quero trocar meu produto" without specifying if it's regret, preference, or defect; or "Qual o status do pedido do Bruno?" when multiple customers share a name), **present clear options** to help them disambiguate.
 - **Out-of-Scope:** If the customer asks unrelated questions (politics, recipes, weather, math homework, programming, competitors), politely decline while staying in persona and steer the conversation back to musical instruments and Empório da Música services.
 """
+
