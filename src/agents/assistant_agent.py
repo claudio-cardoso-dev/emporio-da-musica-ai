@@ -200,6 +200,7 @@ class AssistantAgent:
                 "confidence": clarity["confidence"],
                 "model_used": "guardrail_low_confidence",
                 "tools_called": [],
+                "products": [],
                 "logged_failed_intent": True,
             }
 
@@ -227,6 +228,7 @@ class AssistantAgent:
         messages.append({"role": "user", "content": user_message})
 
         tools_called_log: List[Dict[str, Any]] = []
+        collected_products: Dict[int, Dict[str, Any]] = {}
         model_used = self.model_chain[0]
 
         for _ in range(4):
@@ -246,6 +248,7 @@ class AssistantAgent:
                     "confidence": clarity["confidence"],
                     "model_used": model_used,
                     "tools_called": tools_called_log,
+                    "products": list(collected_products.values()),
                     "logged_failed_intent": False,
                 }
 
@@ -283,6 +286,27 @@ class AssistantAgent:
                     }
                 )
 
+                # Collect structured product cards for UI Carousel rendering
+                if isinstance(tool_output, dict):
+                    if "products" in tool_output and isinstance(tool_output["products"], list):
+                        for prod in tool_output["products"]:
+                            if isinstance(prod, dict) and "product_id" in prod:
+                                collected_products[int(prod["product_id"])] = prod
+                    if "product" in tool_output and isinstance(tool_output["product"], dict):
+                        prod = tool_output["product"]
+                        if "product_id" in prod:
+                            collected_products[int(prod["product_id"])] = prod
+                    if "recommended_alternatives_in_stock" in tool_output and isinstance(
+                        tool_output["recommended_alternatives_in_stock"], list
+                    ):
+                        for alt in tool_output["recommended_alternatives_in_stock"]:
+                            if isinstance(alt, dict) and "product_id" in alt:
+                                full_alt = self.tool_executor.product_repo.get_by_id(
+                                    int(alt["product_id"])
+                                )
+                                if full_alt:
+                                    collected_products[int(full_alt["product_id"])] = full_alt
+
                 # Check if tool returned an ambiguity flag (e.g., multiple customers with same name)
                 if isinstance(tool_output, dict) and tool_output.get("ambiguous_customers"):
                     self.failed_intent_repo.log_failure(
@@ -316,6 +340,7 @@ class AssistantAgent:
             "confidence": clarity["confidence"],
             "model_used": model_used,
             "tools_called": tools_called_log,
+            "products": list(collected_products.values()),
             "logged_failed_intent": False,
         }
 

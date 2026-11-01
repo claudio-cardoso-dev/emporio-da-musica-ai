@@ -25,10 +25,12 @@ def test_health_endpoint_reports_qwen_primary(api_client: TestClient) -> None:
 
 
 def test_web_ui_html_served(api_client: TestClient) -> None:
-    """Verify root endpoint serves the glassmorphism Web Chat UI."""
+    """Verify root endpoint serves the glassmorphism Web Chat UI with Product Carousel and Cart."""
     res = api_client.get("/")
     assert res.status_code == 200
     assert "Empório da Música" in res.text
+    assert "buildProductCarousel" in res.text
+    assert "Adicionar ao Carrinho" in res.text
 
 
 def test_chat_session_reset_and_failed_intents_endpoint(api_client: TestClient) -> None:
