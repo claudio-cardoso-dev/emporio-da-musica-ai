@@ -196,29 +196,138 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
     .carousel-track::-webkit-scrollbar-thumb { background: rgba(245, 158, 11, 0.4); border-radius: 999px; }
 
     .prod-card {
-      min-width: 245px;
-      max-width: 245px;
-      background: linear-gradient(160deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.92));
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      min-width: 270px;
+      max-width: 270px;
+      height: 375px;
+      perspective: 1000px;
+      position: relative;
+      background: transparent;
+      border: none;
+      padding: 0;
+      flex-shrink: 0;
+      transition: transform 0.2s ease;
+    }
+    .prod-card:hover {
+      transform: translateY(-4px);
+    }
+    .card-inner {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      transform-style: preserve-3d;
+      transition: transform 0.65s cubic-bezier(0.4, 0, 0.2, 1);
       border-radius: 16px;
-      padding: 14px;
+    }
+    .card-inner.is-flipped {
+      transform: rotateY(180deg);
+    }
+    .card-face {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      -webkit-backface-visibility: hidden;
+      backface-visibility: hidden;
+      border-radius: 16px;
+      padding: 13px 14px;
+      box-sizing: border-box;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      gap: 10px;
-      transition: transform 0.2s, border-color 0.2s;
-      position: relative;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
     }
-    .prod-card:hover {
-      transform: translateY(-3px);
+    .card-front {
+      background: linear-gradient(160deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.92));
+      z-index: 2;
+      transform: rotateY(0deg);
+    }
+    .card-front:hover {
       border-color: rgba(245, 158, 11, 0.55);
+    }
+    .card-back {
+      background: linear-gradient(160deg, rgba(20, 30, 48, 0.98), rgba(15, 23, 42, 0.96));
+      border: 1px solid rgba(245, 158, 11, 0.45);
+      transform: rotateY(180deg);
+      z-index: 1;
     }
     .prod-top-badges {
       display: flex; justify-content: space-between; align-items: center; gap: 6px;
     }
     .cat-tag {
-      font-size: 0.7rem; color: #94a3b8; background: rgba(255,255,255,0.06);
-      padding: 3px 8px; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      font-size: 0.72rem; font-weight: 600; color: #94a3b8; background: rgba(255,255,255,0.07);
+      padding: 3px 8px; border-radius: 6px; white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .cat-tag-clickable {
+      font-size: 0.72rem; font-weight: 700; color: #38bdf8; background: rgba(56, 189, 248, 0.14);
+      border: 1px solid rgba(56, 189, 248, 0.45); padding: 3px 8px; border-radius: 6px;
+      cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all 0.2s ease;
+      font-family: inherit; white-space: nowrap;
+    }
+    .cat-tag-clickable:hover {
+      background: rgba(56, 189, 248, 0.3); border-color: #38bdf8; color: #fff; transform: scale(1.04);
+    }
+    .btn-desc-flip {
+      font-size: 0.7rem; font-weight: 700; color: #fcd34d; background: rgba(245, 158, 11, 0.16);
+      border: 1px solid rgba(245, 158, 11, 0.4); padding: 3px 8px; border-radius: 6px;
+      cursor: pointer; display: inline-flex; align-items: center; gap: 3px; transition: all 0.2s ease;
+      white-space: nowrap; font-family: inherit;
+    }
+    .btn-desc-flip:hover {
+      background: rgba(245, 158, 11, 0.32); border-color: var(--accent); color: #fff; transform: scale(1.04);
+    }
+    .card-back-body {
+      flex: 1; display: flex; flex-direction: column; gap: 6px; margin-top: 6px; overflow: hidden;
+    }
+    .card-back-title {
+      font-size: 0.86rem; font-weight: 700; color: #fcd34d; line-height: 1.3;
+    }
+    .card-back-meta {
+      display: flex; flex-wrap: wrap; gap: 4px;
+    }
+    .meta-pill {
+      font-size: 0.68rem; background: rgba(255, 255, 255, 0.07); color: #cbd5e1;
+      padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .card-back-desc-box {
+      flex: 1; background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px; padding: 8px 10px; overflow-y: auto;
+      scrollbar-width: thin; scrollbar-color: rgba(245, 158, 11, 0.4) transparent;
+      margin-top: 2px; max-height: 140px;
+    }
+    .card-back-desc-box::-webkit-scrollbar { width: 4px; }
+    .card-back-desc-box::-webkit-scrollbar-thumb { background: rgba(245, 158, 11, 0.4); border-radius: 999px; }
+    .card-back-desc-heading {
+      font-size: 0.68rem; font-weight: 700; color: #94a3b8; text-transform: uppercase;
+      letter-spacing: 0.04em; margin-bottom: 4px;
+    }
+    .card-back-desc-content {
+      font-size: 0.76rem; color: #e2e8f0; line-height: 1.4; white-space: pre-wrap;
+    }
+    .card-back-footer {
+      display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .card-back-price-box {
+      display: flex; justify-content: space-between; align-items: baseline;
+    }
+    .card-back-price {
+      font-size: 0.95rem; font-weight: 800; color: #fcd34d;
+    }
+    .card-back-pix {
+      font-size: 0.72rem; font-weight: 600; color: #6ee7b7;
+    }
+    .btn-return-card {
+      width: 100%; padding: 7px 10px; border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.08);
+      color: #fff; font-weight: 700; font-size: 0.78rem; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+      transition: 0.2s; font-family: inherit;
+    }
+    .btn-return-card:hover {
+      background: rgba(255, 255, 255, 0.18); border-color: #38bdf8; color: #38bdf8;
     }
     .promo-tag {
       font-size: 0.68rem; font-weight: 700; background: rgba(239, 68, 68, 0.2);
@@ -413,7 +522,7 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       <span class="chip" onclick="sendQuick('Quais produtos estão em promoção ativa hoje?')">🔥 Produtos em Promoção</span>
       <span class="chip" onclick="sendQuick('Quanto custa o Takamine GD20?')">💰 Preço Takamine GD20</span>
       <span class="chip" onclick="sendQuick('Qual o endereço e horário de funcionamento da loja?')">📍 Endereço e Horário</span>
-      <span class="chip" onclick="sendQuick('Qual o status do pedido #8?')">📦 Rastrear Pedido #8</span>
+      <span class="chip" onclick="sendQuick('Quais informações posso usar para consultar meu pedido ou rastreio?')">📦 Consultar Pedido / Rastreio</span>
     </div>
 
     <div class="input-area">
@@ -552,32 +661,83 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
              <div class="pix-price">⚡ ${formatBRL(p.pix_price_brl)} no PIX (5% off)</div>`;
 
         card.innerHTML = `
-          <div>
-            <div class="prod-top-badges">
-              <span class="cat-tag">${escapeHtml(p.category_name || "Instrumento")}</span>
-              ${promoBadge || statusBadge}
-            </div>
-            <div class="prod-icon-box" style="margin: 8px 0;">${emoji}</div>
-            <div class="prod-title" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
-            <div class="prod-desc" style="margin-top:4px;">${escapeHtml(p.description || "")}</div>
-          </div>
-          <div>
-            <div class="price-box" style="margin-bottom: 8px;">
-              ${priceHtml}
-              <div style="margin-top:4px; font-size:0.7rem; color:#94a3b8;">${promoBadge ? statusBadge : ""}</div>
-            </div>
-            <div class="card-actions">
-              <div class="qty-row">
-                <span style="font-size:0.74rem; color:#94a3b8; padding-left:4px;">Qtd:</span>
-                <div style="display:flex; align-items:center; gap:6px;">
-                  <button class="qty-btn" onclick="changeCardQty(${pid}, -1, ${maxStock})" ${!inStock ? "disabled" : ""}>−</button>
-                  <span class="qty-val" id="qty_${pid}">1</span>
-                  <button class="qty-btn" onclick="changeCardQty(${pid}, 1, ${maxStock})" ${!inStock ? "disabled" : ""}>+</button>
+          <div class="card-inner" id="card_inner_${pid}">
+            <!-- FACE FRONTAL -->
+            <div class="card-face card-front">
+              <div>
+                <div class="prod-top-badges">
+                  <span class="cat-tag">${escapeHtml(p.category_name || "Instrumento")}</span>
+                  <button class="btn-desc-flip" onclick="flipCardToBack(${pid})" title="Ver descrição completa">
+                    📖 Descrição
+                  </button>
+                  <div style="display:flex; gap:4px; align-items:center;">
+                    ${promoBadge}
+                    ${statusBadge}
+                  </div>
+                </div>
+                <div class="prod-icon-box">${emoji}</div>
+                <div class="prod-title" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
+              </div>
+              <div>
+                <div class="price-box">
+                  ${priceHtml}
+                  <div style="margin-top:4px; font-size:0.7rem; color:#94a3b8;">${promoBadge ? statusBadge : ""}</div>
+                </div>
+                <div class="card-actions">
+                  <div class="qty-row">
+                    <span style="font-size:0.74rem; color:#94a3b8; padding-left:4px;">Qtd:</span>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                      <button class="qty-btn" onclick="changeCardQty(${pid}, -1, ${maxStock})" ${!inStock ? "disabled" : ""}>−</button>
+                      <span class="qty-val" id="qty_${pid}">1</span>
+                      <button class="qty-btn" onclick="changeCardQty(${pid}, 1, ${maxStock})" ${!inStock ? "disabled" : ""}>+</button>
+                    </div>
+                  </div>
+                  <button class="btn-add-cart" id="btn_add_${pid}" ${!inStock ? "disabled" : ""}>
+                    ${inStock ? "🛒 Adicionar ao Carrinho" : "Indisponível"}
+                  </button>
                 </div>
               </div>
-              <button class="btn-add-cart" id="btn_add_${pid}" ${!inStock ? "disabled" : ""}>
-                ${inStock ? "🛒 Adicionar ao Carrinho" : "Indisponível"}
-              </button>
+            </div>
+
+            <!-- FACE TRASEIRA (DESCRIÇÃO COMPLETA) -->
+            <div class="card-face card-back">
+              <div>
+                <div class="prod-top-badges">
+                  <button class="cat-tag-clickable" onclick="flipCardToFront(${pid})" title="Clique na categoria para voltar ao produto">
+                    ↩ ${escapeHtml(p.category_name || "Instrumento")}
+                  </button>
+                  <span class="btn-desc-flip" onclick="flipCardToFront(${pid})" style="cursor:pointer;" title="Clique para voltar">
+                    Descrição ✕
+                  </span>
+                  <div style="display:flex; gap:4px; align-items:center;">
+                    ${promoBadge}
+                    ${statusBadge}
+                  </div>
+                </div>
+                <div class="card-back-body">
+                  <div class="card-back-title" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
+                  <div class="card-back-meta">
+                    ${p.brand ? `<span class="meta-pill">🏷️ ${escapeHtml(p.brand)}</span>` : ""}
+                    ${p.strings_type ? `<span class="meta-pill">🎸 ${escapeHtml(p.strings_type)}</span>` : ""}
+                    ${p.is_electroacoustic ? `<span class="meta-pill">⚡ Eletroacústico</span>` : ""}
+                  </div>
+                  <div class="card-back-desc-box">
+                    <div class="card-back-desc-heading">Descrição Completa:</div>
+                    <div class="card-back-desc-content">${escapeHtml(p.description || "Descrição completa não cadastrada no catálogo.")}</div>
+                  </div>
+                </div>
+              </div>
+              <div class="card-back-footer">
+                <div class="card-back-price-box">
+                  <div>
+                    <span class="card-back-price">${formatBRL(p.effective_price_brl)}</span>
+                    <span class="card-back-pix"> (⚡ ${formatBRL(p.pix_price_brl)} PIX)</span>
+                  </div>
+                </div>
+                <button class="btn-return-card" onclick="flipCardToFront(${pid})">
+                  ↩ Voltar ao Produto
+                </button>
+              </div>
             </div>
           </div>
         `;
@@ -596,6 +756,20 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
 
       section.appendChild(track);
       return section;
+    }
+
+    function flipCardToBack(pid) {
+      const cardInner = document.getElementById(`card_inner_${pid}`);
+      if (cardInner) {
+        cardInner.classList.add("is-flipped");
+      }
+    }
+
+    function flipCardToFront(pid) {
+      const cardInner = document.getElementById(`card_inner_${pid}`);
+      if (cardInner) {
+        cardInner.classList.remove("is-flipped");
+      }
     }
 
     function changeCardQty(pid, delta, maxStock) {
@@ -800,20 +974,35 @@ def create_app(db_path: Optional[Path] = None, pdf_path: Optional[Path] = None) 
         """Send a message to the Empório da Música virtual assistant."""
         if not payload.message or not payload.message.strip():
             raise HTTPException(status_code=400, detail="Message cannot be empty.")
-        result = chat_service.process_message(
-            user_message=payload.message,
-            session_id=payload.session_id,
-        )
-        return ChatResponse(
-            session_id=payload.session_id,
-            reply=result["reply"],
-            language=result["language"],
-            confidence=result["confidence"],
-            model_used=result["model_used"],
-            tools_called=result.get("tools_called", []),
-            products=result.get("products", []),
-            logged_failed_intent=result.get("logged_failed_intent", False),
-        )
+        try:
+            result = chat_service.process_message(
+                user_message=payload.message,
+                session_id=payload.session_id,
+            )
+            return ChatResponse(
+                session_id=payload.session_id,
+                reply=result["reply"],
+                language=result["language"],
+                confidence=result["confidence"],
+                model_used=result["model_used"],
+                tools_called=result.get("tools_called", []),
+                products=result.get("products", []),
+                logged_failed_intent=result.get("logged_failed_intent", False),
+            )
+        except Exception as exc:
+            return ChatResponse(
+                session_id=payload.session_id,
+                reply=(
+                    "Tivemos uma pequena oscilação temporária de conexão com o provedor de IA. "
+                    "Por favor, tente novamente em alguns segundos ou contate nosso WhatsApp (67) 3321-4500! 🎵"
+                ),
+                language="pt",
+                confidence=0.5,
+                model_used="api_error_recovery",
+                tools_called=[],
+                products=[],
+                logged_failed_intent=True,
+            )
 
     @app.get("/api/session/{session_id}/history", tags=["Chat"])
     def get_session_history(session_id: str) -> Dict[str, Any]:

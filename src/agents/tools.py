@@ -96,23 +96,31 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         "function": {
             "name": "check_order_status",
             "description": (
-                "Look up customer orders, delivery status, tracking codes, order items, and cancellation reasons "
-                "by order_id, tracking_code, or customer identifier (name, phone, or email)."
+                "Look up customer orders, delivery status, tracking codes, order items, and cancellation reasons. "
+                "STRICT SECURITY & LGPD RULE: Before ANY registration, order, or tracking lookup can be performed, "
+                "the customer MUST provide and confirm their registered E-MAIL or PHONE NUMBER (`customer_identifier`) as primary key. "
+                "If the customer informed their name (e.g. 'Camila Duarte Nascimento'), pass it in `customer_name`. "
+                "The tool will verify that the phone/email strictly belongs to that customer name. "
+                "If they do not match, the tool will return a verification failure WITHOUT revealing any customer data."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "order_id": {
-                        "type": "integer",
-                        "description": "Numeric order ID (1 to 20).",
-                    },
-                    "tracking_code": {
+                    "customer_name": {
                         "type": "string",
-                        "description": "Shipping tracking code (e.g., 'BRJL5544332BR').",
+                        "description": "Customer name if informed in this turn or earlier in conversation (e.g., 'Camila Duarte Nascimento'). ALWAYS provide this when a name was mentioned so the tool can cross-verify that the phone/email matches that name.",
                     },
                     "customer_identifier": {
                         "type": "string",
-                        "description": "Customer name, phone number, or email address.",
+                        "description": "MANDATORY primary key: customer's registered email address or phone number. If the user has not provided their email or phone yet, leave empty or pass what they gave and the tool will request email/phone confirmation.",
+                    },
+                    "order_id": {
+                        "type": "integer",
+                        "description": "Optional numeric order ID informed by the customer (will be validated against the owner of customer_identifier).",
+                    },
+                    "tracking_code": {
+                        "type": "string",
+                        "description": "Optional shipping tracking code informed by the customer (format: BR + 9 alphanumeric chars + BR, e.g., 'BR000000000BR').",
                     },
                 },
                 "required": [],
@@ -182,6 +190,35 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
         },
     },
 ]
+
+
+def is_name_match(provided_name: str, db_name: str) -> bool:
+    """Verify that a user-provided name strictly matches the customer name in the database."""
+    if not provided_name or not db_name:
+        return False
+    norm_provided = normalize_text(provided_name)
+    norm_db = normalize_text(db_name)
+
+    if norm_provided == norm_db:
+        return True
+
+    prepositions = {"de", "da", "do", "das", "dos", "e"}
+    prov_tokens = [t for t in norm_provided.split() if len(t) > 1 and t not in prepositions]
+    db_tokens = [t for t in norm_db.split() if len(t) > 1 and t not in prepositions]
+
+    if not prov_tokens or not db_tokens:
+        return False
+
+    # First name must match
+    if prov_tokens[0] != db_tokens[0]:
+        return False
+
+    # If full name was provided (>= 2 names), at least 2 tokens must overlap
+    if len(prov_tokens) >= 2:
+        overlap = set(prov_tokens).intersection(set(db_tokens))
+        return len(overlap) >= 2
+
+    return True
 
 
 class ToolExecutor:
@@ -347,57 +384,133 @@ class ToolExecutor:
         order_id: Optional[int] = None,
         tracking_code: Optional[str] = None,
         customer_identifier: Optional[str] = None,
+        customer_name: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Look up order status by order ID, tracking code, or customer name/phone/email."""
-        if order_id is not None:
-            order = self.order_repo.get_by_order_id(int(order_id))
-            if order:
-                return {"found": True, "orders": [order]}
+        """
+        Look up order status strictly enforcing primary key verification (phone or email).
+        Cross-verifies customer_name if provided and returns ONLY data belonging to that customer.
+        """
+        clean_id = (customer_identifier or "").strip()
 
-        if tracking_code:
-            order = self.order_repo.get_by_tracking_code(tracking_code)
-            if order:
-                return {"found": True, "orders": [order]}
+        # Verify whether a valid primary key (email or phone with >= 8 digits) was provided
+        email_match = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", clean_id)
+        digits_only = re.sub(r"\D", "", clean_id)
+        has_email = email_match is not None
+        has_phone = len(digits_only) >= 8
 
-        if customer_identifier:
-            # Check if customer_identifier looks like 'Pedido 8' or '#8'
-            num_match = re.search(r"#?(\d{1,2})\b", customer_identifier)
-            if num_match and len(customer_identifier.strip()) <= 10:
-                maybe_order = self.order_repo.get_by_order_id(int(num_match.group(1)))
-                if maybe_order:
-                    return {"found": True, "orders": [maybe_order]}
+        if not has_email and not has_phone:
+            return {
+                "found": False,
+                "requires_primary_key_confirmation": True,
+                "ambiguous_customers": True,
+                "provided_identifier": clean_id or None,
+                "requested_order_id": order_id,
+                "requested_tracking_code": tracking_code,
+                "message": (
+                    "SECURITY & LGPD BLOCK: Before looking up ANY registration, order number, or tracking code, "
+                    "the customer MUST first confirm their registered E-MAIL or PHONE NUMBER as primary key. "
+                    "Do NOT show any order, tracking, or customer data. Politely ask the user to provide their "
+                    "registered email address or phone number to authenticate their identity."
+                ),
+            }
 
-            customers = self.customer_repo.find_customers(customer_identifier)
-            if len(customers) > 1:
+        # Resolve the authenticated customer owner from the primary key (email or phone)
+        pk_query = email_match.group(0) if email_match else digits_only
+        matched_customers = self.customer_repo.find_customers(pk_query)
+
+        if not matched_customers:
+            return {
+                "found": False,
+                "verification_failed": True,
+                "message": (
+                    "FALHA DE CONFIRMAÇÃO: O telefone ou e-mail informado não corresponde ao nome informado. "
+                    "Por motivos de segurança e privacidade (LGPD), NÃO confirme se o número existe ou de quem é. "
+                    "Apenas informe educadamente que o telefone ou e-mail não corresponde ao nome completo informado, "
+                    "e solicite que o cliente verifique e informe o telefone ou e-mail correto cadastrado."
+                ),
+            }
+
+        verified_customer = matched_customers[0]
+
+        # Cross-verify customer_name if provided
+        if customer_name and customer_name.strip():
+            if not is_name_match(customer_name, verified_customer.get("name", "")):
                 return {
                     "found": False,
-                    "ambiguous_customers": True,
-                    "message": "Multiple customers matched this name. Ask the user to confirm their email, phone, or full name.",
-                    "matching_customers": [
-                        {
-                            "customer_id": c["customer_id"],
-                            "name": c["name"],
-                            "city": c["city"],
-                            "masked_email": c["email"][:3] + "***@" + c["email"].split("@")[-1],
-                        }
-                        for c in customers
-                    ],
-                }
-            if len(customers) == 1:
-                cust = customers[0]
-                orders = self.order_repo.get_orders_by_customer(cust["customer_id"])
-                return {
-                    "found": len(orders) > 0,
-                    "customer": cust,
-                    "orders": orders,
-                    "message": "Orders retrieved successfully."
-                    if orders
-                    else "Customer found in database, but has no registered orders.",
+                    "verification_failed": True,
+                    "message": (
+                        f"FALHA DE CONFIRMAÇÃO: O telefone ou e-mail informado não corresponde ao nome completo informado ({customer_name.strip()}). "
+                        "Por motivos de segurança e privacidade (LGPD), NUNCA confirme se o número/e-mail existe no sistema e NUNCA revele a quem ele pertence. "
+                        "Apenas informe educadamente que a confirmação falhou e que o número não corresponde ao nome completo informado, "
+                        "solicitando que confira e informe o telefone ou e-mail correto cadastrado."
+                    ),
                 }
 
+        verified_cust_id = int(verified_customer["customer_id"])
+        customer_orders = self.order_repo.get_orders_by_customer(verified_cust_id)
+
+        # If user also specified an order_id, verify ownership strictly
+        if order_id is not None:
+            owned_order = next(
+                (o for o in customer_orders if int(o["order_id"]) == int(order_id)),
+                None,
+            )
+            if not owned_order:
+                return {
+                    "found": False,
+                    "ownership_mismatch": True,
+                    "customer": verified_customer,
+                    "orders": customer_orders,
+                    "message": (
+                        f"O pedido #{order_id} não está vinculado ao seu cadastro. "
+                        f"Exibindo apenas os pedidos vinculados ao seu cadastro."
+                    ),
+                }
+            return {
+                "found": True,
+                "customer": verified_customer,
+                "orders": [owned_order],
+                "message": "Order verified and belongs to the authenticated primary key owner.",
+            }
+
+        # If user also specified a tracking_code, verify ownership strictly
+        if tracking_code and tracking_code.strip():
+            clean_track = tracking_code.strip().upper()
+            owned_track_order = next(
+                (
+                    o
+                    for o in customer_orders
+                    if (o.get("tracking_code") or "").strip().upper() == clean_track
+                ),
+                None,
+            )
+            if not owned_track_order:
+                return {
+                    "found": False,
+                    "ownership_mismatch": True,
+                    "customer": verified_customer,
+                    "orders": customer_orders,
+                    "message": (
+                        f"O código de rastreamento informado não está vinculado ao seu cadastro. "
+                        f"Exibindo apenas os pedidos vinculados ao seu cadastro."
+                    ),
+                }
+            return {
+                "found": True,
+                "customer": verified_customer,
+                "orders": [owned_track_order],
+                "message": "Tracking code verified and belongs to the authenticated primary key owner.",
+            }
+
         return {
-            "found": False,
-            "message": "No order or customer found with the provided identifier. Please verify the order number, email, phone, or tracking code.",
+            "found": len(customer_orders) > 0,
+            "customer": verified_customer,
+            "orders": customer_orders,
+            "message": (
+                "Customer authenticated via primary key. Showing ONLY orders owned by this customer."
+                if customer_orders
+                else "Customer authenticated via primary key, but has no registered orders."
+            ),
         }
 
     def simulate_payment_and_shipping(

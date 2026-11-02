@@ -1,12 +1,18 @@
 """Tests for Stage 4: Agent tools, LLM model fallback order, multilingual detection, and guardrails."""
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
 
-from src.agents.assistant_agent import AssistantAgent, clean_thinking_tags
-from src.agents.prompts import detect_user_language
-from src.agents.tools import ToolExecutor
+from src.agents.assistant_agent import (
+    AssistantAgent,
+    clean_thinking_tags,
+    extract_claimed_customer_name,
+    make_llm_tool_payload,
+)
+from src.agents.prompts import SYSTEM_PROMPT, detect_user_language
+from src.agents.tools import TOOL_SCHEMAS, ToolExecutor, is_name_match
 from src.db.ingestion import ingest_all_csvs
 from src.services.chat_service import ChatService
 
@@ -87,16 +93,32 @@ def test_tool_executor_catalog_and_unavailable_alternatives(agent_db: Path) -> N
     assert len(disc_res["recommended_alternatives_in_stock"]) == 3
 
 
-def test_tool_executor_ambiguous_customer_disambiguation(agent_db: Path) -> None:
+def test_tool_executor_name_only_requires_primary_key_confirmation(agent_db: Path) -> None:
     """
-    Verify that searching orders by a shared customer first name (e.g. 'Bruno' or 'Camila')
-    returns an ambiguity flag and masked options so the agent can ask the user to disambiguate.
+    Verify that searching orders by customer name alone (even a full name like
+    'Camila Duarte Nascimento' or first name 'Bruno') blocks order retrieval and requires
+    phone or email confirmation as a primary key.
     """
     executor = ToolExecutor(db_path=agent_db)
-    res = executor.execute("check_order_status", {"customer_identifier": "Bruno"})
-    assert res["found"] is False
-    assert res.get("ambiguous_customers") is True
-    assert len(res["matching_customers"]) >= 2
+
+    # 1. Shared first name ('Bruno') -> blocked, requires phone/email
+    res_bruno = executor.execute("check_order_status", {"customer_identifier": "Bruno"})
+    assert res_bruno["found"] is False
+    assert res_bruno.get("requires_primary_key_confirmation") is True
+
+    # 2. Unique full name ('Camila Duarte Nascimento') -> still blocked without phone/email
+    res_camila = executor.execute(
+        "check_order_status", {"customer_identifier": "Camila Duarte Nascimento"}
+    )
+    assert res_camila["found"] is False
+    assert res_camila.get("requires_primary_key_confirmation") is True
+
+    # 3. Verified with email primary key -> succeeds
+    res_verified = executor.execute(
+        "check_order_status", {"customer_identifier": "camila.duarte@inlook.com"}
+    )
+    assert res_verified["found"] is True
+    assert res_verified["orders"][0]["order_id"] == 16
 
 
 def test_llm_fallback_mechanism_on_primary_failure(agent_db: Path) -> None:
@@ -125,3 +147,125 @@ def test_llm_fallback_mechanism_on_primary_failure(agent_db: Path) -> None:
     assert call_models == ["qwen/qwen3.8-27b", "openai/gpt-oss-120b"]
     assert result["model_used"] == "openai/gpt-oss-120b"
     assert "Empório da Música" in result["reply"]
+
+
+def test_tool_schemas_do_not_expose_valid_data_or_id_ranges() -> None:
+    """
+    Security & Privacy check: Ensure tool schemas and prompts never leak valid customer
+    tracking codes (like BRJL5544332BR) or internal database ID ranges (like '1 to 20').
+    """
+    schemas_str = str(TOOL_SCHEMAS)
+    assert "BRJL5544332BR" not in schemas_str
+    assert "1 to 20" not in schemas_str
+    assert "NEVER reveal internal database ID ranges" in SYSTEM_PROMPT
+
+
+def test_identity_mismatch_prevents_data_leak_and_returns_no_third_party_info(agent_db: Path) -> None:
+    """
+    LGPD / Privacy check: When a customer gives their name (e.g. Camila Duarte Nascimento)
+    and provides another user's phone (e.g. Bruno's 67985432109), the tool must:
+    1. Mark verification_failed = True, found = False.
+    2. NOT return 'customer' dictionary.
+    3. NOT return 'orders' dictionary.
+    4. NEVER mention Bruno's name or email anywhere in the response payload.
+    """
+    executor = ToolExecutor(db_path=agent_db)
+
+    # Camila provides Bruno's phone number
+    res_mismatch = executor.execute(
+        "check_order_status",
+        {
+            "customer_identifier": "67985432109",
+            "customer_name": "Camila Duarte Nascimento",
+        },
+    )
+    assert res_mismatch["found"] is False
+    assert res_mismatch.get("verification_failed") is True
+    assert "customer" not in res_mismatch
+    assert "orders" not in res_mismatch
+    assert "Bruno" not in json.dumps(res_mismatch)
+
+    # Camila provides unknown phone number
+    res_unknown = executor.execute(
+        "check_order_status",
+        {
+            "customer_identifier": "67999999999",
+            "customer_name": "Camila Duarte Nascimento",
+        },
+    )
+    assert res_unknown["found"] is False
+    assert res_unknown.get("verification_failed") is True
+    assert "customer" not in res_unknown
+    assert "orders" not in res_unknown
+
+    # Camila provides her own correct phone number
+    res_valid = executor.execute(
+        "check_order_status",
+        {
+            "customer_identifier": "(67) 99567-8901",
+            "customer_name": "Camila Duarte Nascimento",
+        },
+    )
+    assert res_valid["found"] is True
+    assert res_valid["customer"]["name"] == "Camila Duarte Nascimento"
+    assert len(res_valid["orders"]) >= 1
+
+
+def test_extract_claimed_customer_name_patterns() -> None:
+    """Verify claimed customer name extraction across multiple natural conversational patterns."""
+    # 1. Full self-introduction
+    msgs1 = [
+        {"role": "user", "content": "olá, meu nome é Camila Duarte Nascimento, gostaria de ver meu rastreio"}
+    ]
+    assert extract_claimed_customer_name(msgs1) == "Camila Duarte Nascimento"
+
+    # 2. 'sou a...' pattern
+    msgs2 = [{"role": "user", "content": "sou a Camila Duarte"}]
+    assert extract_claimed_customer_name(msgs2) == "Camila Duarte"
+
+    # 3. 'me chamo...' pattern
+    msgs3 = [{"role": "user", "content": "me chamo João Silva"}]
+    assert extract_claimed_customer_name(msgs3) == "João Silva"
+
+    # 4. English 'my name is...'
+    msgs4 = [{"role": "user", "content": "hello, my name is John Doe, need tracking"}]
+    assert extract_claimed_customer_name(msgs4) == "John Doe"
+
+    # 5. Assistant greeting fallback
+    msgs5 = [
+        {"role": "assistant", "content": "Olá, Camila! Tudo bem? Me informe seu telefone."}
+    ]
+    assert extract_claimed_customer_name(msgs5) == "Camila"
+
+
+def test_make_llm_tool_payload_compacts_catalog_output() -> None:
+    """Verify make_llm_tool_payload strips heavy descriptions and limits sample to protect Groq TPM limit."""
+    mock_products = [
+        {
+            "product_id": i,
+            "name": f"Instrument {i}",
+            "description": "Very long description " * 20,
+            "category_name": "Ukuleles",
+            "effective_price_brl": 199.9,
+            "pix_price_brl": 189.9,
+            "stock_quantity": 5,
+            "in_stock": True,
+            "active_promotion": None,
+            "strings_type": "nylon",
+        }
+        for i in range(1, 16)
+    ]
+    tool_out = {
+        "category": "Ukuleles",
+        "products": mock_products,
+    }
+    llm_payload = make_llm_tool_payload("search_instruments", tool_out)
+
+    assert llm_payload["total_matches"] == 15
+    assert len(llm_payload["sample_products"]) == 10
+    # Description should be omitted from LLM payload
+    for sample in llm_payload["sample_products"]:
+        assert "description" not in sample
+        assert "price" in sample
+        assert "pix_price" in sample
+        assert "stock" in sample

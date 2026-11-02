@@ -26,6 +26,118 @@ def clean_thinking_tags(text: str) -> str:
     return cleaned.strip()
 
 
+def extract_claimed_customer_name(messages: List[Dict[str, Any]]) -> Optional[str]:
+    """
+    Extract any customer name claimed by the user across conversation turns.
+    Scans recent messages for introductions, greetings, and standalone names.
+    """
+    prepositions = {"de", "da", "do", "das", "dos", "e"}
+
+    # 1. Search user messages for self-identification patterns
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        content = (msg.get("content") or "").strip()
+        if not content:
+            continue
+
+        match = re.search(
+            r"(?:meu nome [ée]|me chamo|sou(?:\s+[oa])?|aqui [ée]|my name is|i am|mi nombre es|soy)\s+([A-Za-zÀ-ÖØ-öø-ÿ\s]+?)(?:[,\.\!\?]|\s+gostaria|\s+quero|\s+e\s+|\s+meu|\s+minha|\s+por favor|$)",
+            content,
+            re.IGNORECASE,
+        )
+        if match:
+            candidate = match.group(1).strip()
+            tokens = [t for t in candidate.split() if len(t) > 1 and t.lower() not in prepositions]
+            if tokens:
+                return candidate.strip()
+
+        # Standalone name check: 2 to 5 words, letters only, capitalized
+        words = content.split()
+        if 2 <= len(words) <= 5:
+            clean_words = [re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ]", "", w) for w in words]
+            if all(len(w) >= 2 and w[0].isupper() for w in clean_words):
+                norm = normalize_text(content)
+                common_terms = {
+                    "violao", "guitarra", "ukulele", "baixo", "teclado", "bateria",
+                    "preco", "promocao", "pedido", "rastreio", "horario", "endereco",
+                    "troca", "devolucao", "garantia", "ola", "bom dia", "boa tarde",
+                    "boa noite", "cartao", "pix", "frete", "loja", "emporio",
+                }
+                if not any(term in norm for term in common_terms):
+                    return " ".join(clean_words)
+
+    # 2. Check assistant greetings addressing the user by name (e.g. "Olá, Camila! Tudo bem?")
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        content = (msg.get("content") or "").strip()
+        match = re.search(r"(?:[Oo]l[áa]|[Oo]i),?\s+([A-ZÀ-Ö][a-zà-öø-ÿ]+)[!\,\.]", content)
+        if match:
+            greeted_name = match.group(1).strip()
+            if greeted_name.lower() not in {"amigo", "amiga", "cliente", "tudo", "pessoal"}:
+                return greeted_name
+
+    return None
+
+
+def make_llm_tool_payload(fn_name: str, tool_output: Any) -> Any:
+    """
+    Produce a lightweight, token-efficient JSON payload for the LLM context.
+    Prevents TPM rate limit spikes on Groq while preserving key product attributes.
+    """
+    if not isinstance(tool_output, dict):
+        return tool_output
+
+    if fn_name == "search_instruments" and "products" in tool_output:
+        raw_list = tool_output.get("products") or []
+        sample = []
+        for p in raw_list[:10]:
+            item = {
+                "id": p.get("product_id"),
+                "name": p.get("name"),
+                "price": p.get("effective_price_brl"),
+                "pix_price": p.get("pix_price_brl"),
+                "stock": p.get("stock_quantity"),
+                "in_stock": p.get("in_stock"),
+            }
+            if p.get("active_promotion"):
+                item["promo_pct"] = p["active_promotion"].get("discount_percent")
+            if p.get("strings_type"):
+                item["strings"] = p["strings_type"]
+            sample.append(item)
+        return {
+            "category": tool_output.get("category"),
+            "total_matches": len(raw_list),
+            "sample_products": sample,
+        }
+
+    if fn_name == "get_instrument_details_and_pricing" and "product" in tool_output:
+        p = tool_output.get("product") or {}
+        alts = tool_output.get("recommended_alternatives_in_stock") or []
+        return {
+            "found": tool_output.get("found", True),
+            "product": {
+                "id": p.get("product_id"),
+                "name": p.get("name"),
+                "price": p.get("effective_price_brl"),
+                "pix_price": p.get("pix_price_brl"),
+                "in_stock": p.get("in_stock"),
+                "stock_quantity": p.get("stock_quantity"),
+                "status": p.get("status"),
+                "promotion": p.get("active_promotion"),
+            },
+            "payment_simulation": tool_output.get("payment_simulation"),
+            "shipping_simulation": tool_output.get("shipping_simulation"),
+            "alternatives": [
+                {"id": a.get("product_id"), "name": a.get("name"), "price": a.get("price_brl"), "stock": a.get("stock_quantity")}
+                for a in alts[:3]
+            ],
+        }
+
+    return tool_output
+
+
 class AssistantAgent:
     """
     Orchestrates NLU analysis, ambiguity/low-confidence detection, multi-step Tool Calling,
@@ -220,10 +332,13 @@ class AssistantAgent:
             {"role": "system", "content": SYSTEM_PROMPT + lang_instruction}
         ]
 
-        # Append recent conversation history (up to last 10 messages)
-        for msg in history[-10:]:
+        # Append recent conversation history (last 4 messages, trimmed to protect TPM limits)
+        for msg in history[-4:]:
             if msg.get("role") in ("user", "assistant") and msg.get("content"):
-                messages.append({"role": msg["role"], "content": msg["content"]})
+                c = msg["content"]
+                if len(c) > 600:
+                    c = c[:600] + "..."
+                messages.append({"role": msg["role"], "content": c})
 
         messages.append({"role": "user", "content": user_message})
 
@@ -231,116 +346,154 @@ class AssistantAgent:
         collected_products: Dict[int, Dict[str, Any]] = {}
         model_used = self.model_chain[0]
 
-        for _ in range(4):
-            response, model_used = self._call_llm_with_fallbacks(
-                messages=messages,
-                tools=TOOL_SCHEMAS,
-                temperature=settings.llm_temperature,
-            )
-            choice_msg = response.choices[0].message
-            tool_calls = getattr(choice_msg, "tool_calls", None)
-
-            if not tool_calls:
-                final_text = clean_thinking_tags(choice_msg.content or "")
-                return {
-                    "reply": final_text,
-                    "language": detected_lang,
-                    "confidence": clarity["confidence"],
-                    "model_used": model_used,
-                    "tools_called": tools_called_log,
-                    "products": list(collected_products.values()),
-                    "logged_failed_intent": False,
-                }
-
-            # Append assistant message containing tool_calls
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": choice_msg.content or "",
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in tool_calls
-                    ],
-                }
-            )
-
-            for tc in tool_calls:
-                fn_name = tc.function.name
-                try:
-                    fn_args = json.loads(tc.function.arguments or "{}")
-                except json.JSONDecodeError:
-                    fn_args = {}
-
-                tool_output = self.tool_executor.execute(fn_name, fn_args)
-                tools_called_log.append(
-                    {
-                        "tool": fn_name,
-                        "arguments": fn_args,
-                    }
+        try:
+            for _ in range(4):
+                response, model_used = self._call_llm_with_fallbacks(
+                    messages=messages,
+                    tools=TOOL_SCHEMAS,
+                    temperature=settings.llm_temperature,
                 )
+                choice_msg = response.choices[0].message
+                tool_calls = getattr(choice_msg, "tool_calls", None)
 
-                # Collect structured product cards for UI Carousel rendering
-                if isinstance(tool_output, dict):
-                    if "products" in tool_output and isinstance(tool_output["products"], list):
-                        for prod in tool_output["products"]:
-                            if isinstance(prod, dict) and "product_id" in prod:
-                                collected_products[int(prod["product_id"])] = prod
-                    if "product" in tool_output and isinstance(tool_output["product"], dict):
-                        prod = tool_output["product"]
-                        if "product_id" in prod:
-                            collected_products[int(prod["product_id"])] = prod
-                    if "recommended_alternatives_in_stock" in tool_output and isinstance(
-                        tool_output["recommended_alternatives_in_stock"], list
-                    ):
-                        for alt in tool_output["recommended_alternatives_in_stock"]:
-                            if isinstance(alt, dict) and "product_id" in alt:
-                                full_alt = self.tool_executor.product_repo.get_by_id(
-                                    int(alt["product_id"])
-                                )
-                                if full_alt:
-                                    collected_products[int(full_alt["product_id"])] = full_alt
+                if not tool_calls:
+                    final_text = clean_thinking_tags(choice_msg.content or "")
+                    return {
+                        "reply": final_text,
+                        "language": detected_lang,
+                        "confidence": clarity["confidence"],
+                        "model_used": model_used,
+                        "tools_called": tools_called_log,
+                        "products": list(collected_products.values()),
+                        "logged_failed_intent": False,
+                    }
 
-                # Check if tool returned an ambiguity flag (e.g., multiple customers with same name)
-                if isinstance(tool_output, dict) and tool_output.get("ambiguous_customers"):
-                    self.failed_intent_repo.log_failure(
-                        session_id=session_id,
-                        user_message=user_message,
-                        detected_language=detected_lang,
-                        reason="ambiguous_customer_name",
-                        confidence=0.55,
-                        resolution_strategy="present_customer_disambiguation_options",
-                    )
-
+                # Append assistant message containing tool_calls
                 messages.append(
                     {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "name": fn_name,
-                        "content": json.dumps(tool_output, ensure_ascii=False),
+                        "role": "assistant",
+                        "content": choice_msg.content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                },
+                            }
+                            for tc in tool_calls
+                        ],
                     }
                 )
 
-        # Final synthesis call without tools if loop exhausted
-        response, model_used = self._call_llm_with_fallbacks(
-            messages=messages,
-            tools=None,
-            temperature=settings.llm_temperature,
-        )
-        final_text = clean_thinking_tags(response.choices[0].message.content or "")
-        return {
-            "reply": final_text,
-            "language": detected_lang,
-            "confidence": clarity["confidence"],
-            "model_used": model_used,
-            "tools_called": tools_called_log,
-            "products": list(collected_products.values()),
-            "logged_failed_intent": False,
-        }
+                for tc in tool_calls:
+                    fn_name = tc.function.name
+                    try:
+                        fn_args = json.loads(tc.function.arguments or "{}")
+                    except json.JSONDecodeError:
+                        fn_args = {}
+
+                    # Strict LGPD Guardrail: ensure customer_name is cross-verified on order lookups
+                    if fn_name == "check_order_status":
+                        claimed_name = extract_claimed_customer_name(messages)
+                        if claimed_name and not fn_args.get("customer_name"):
+                            fn_args["customer_name"] = claimed_name
+
+                        # If customer_identifier not set by LLM, check if current user message has email or phone
+                        if not fn_args.get("customer_identifier"):
+                            email_m = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", user_message)
+                            digits_m = re.sub(r"\D", "", user_message)
+                            if email_m:
+                                fn_args["customer_identifier"] = email_m.group(0)
+                            elif len(digits_m) >= 8:
+                                fn_args["customer_identifier"] = digits_m
+
+                    tool_output = self.tool_executor.execute(fn_name, fn_args)
+                    tools_called_log.append(
+                        {
+                            "tool": fn_name,
+                            "arguments": fn_args,
+                        }
+                    )
+
+                    # Collect structured product cards for UI Carousel rendering
+                    if isinstance(tool_output, dict):
+                        if "products" in tool_output and isinstance(tool_output["products"], list):
+                            for prod in tool_output["products"]:
+                                if isinstance(prod, dict) and "product_id" in prod:
+                                    collected_products[int(prod["product_id"])] = prod
+                        if "product" in tool_output and isinstance(tool_output["product"], dict):
+                            prod = tool_output["product"]
+                            if "product_id" in prod:
+                                collected_products[int(prod["product_id"])] = prod
+                        if "recommended_alternatives_in_stock" in tool_output and isinstance(
+                            tool_output["recommended_alternatives_in_stock"], list
+                        ):
+                            for alt in tool_output["recommended_alternatives_in_stock"]:
+                                if isinstance(alt, dict) and "product_id" in alt:
+                                    full_alt = self.tool_executor.product_repo.get_by_id(
+                                        int(alt["product_id"])
+                                    )
+                                    if full_alt:
+                                        collected_products[int(full_alt["product_id"])] = full_alt
+
+                    # Check if tool returned an ambiguity flag (e.g., multiple customers with same name)
+                    if isinstance(tool_output, dict) and tool_output.get("ambiguous_customers"):
+                        self.failed_intent_repo.log_failure(
+                            session_id=session_id,
+                            user_message=user_message,
+                            detected_language=detected_lang,
+                            reason="ambiguous_customer_name",
+                            confidence=0.55,
+                            resolution_strategy="present_customer_disambiguation_options",
+                        )
+
+                    llm_payload = make_llm_tool_payload(fn_name, tool_output)
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "name": fn_name,
+                            "content": json.dumps(llm_payload, ensure_ascii=False),
+                        }
+                    )
+
+            # Final synthesis call without tools if loop exhausted
+            response, model_used = self._call_llm_with_fallbacks(
+                messages=messages,
+                tools=None,
+                temperature=settings.llm_temperature,
+            )
+            final_text = clean_thinking_tags(response.choices[0].message.content or "")
+            return {
+                "reply": final_text,
+                "language": detected_lang,
+                "confidence": clarity["confidence"],
+                "model_used": model_used,
+                "tools_called": tools_called_log,
+                "products": list(collected_products.values()),
+                "logged_failed_intent": False,
+            }
+        except Exception as exc:
+            prods = list(collected_products.values())
+            if prods:
+                fallback_reply = (
+                    "Aqui estão as opções encontradas no nosso catálogo! "
+                    "Dá uma olhada no carrossel abaixo para conferir os detalhes, valores e adicionar direto ao carrinho. 🎸"
+                )
+            else:
+                fallback_reply = (
+                    "Tivemos uma pequena oscilação no serviço de IA neste instante. "
+                    "Por favor, tente novamente em alguns segundos ou contate nosso suporte pelo WhatsApp (67) 3321-4500! 🎵"
+                )
+            return {
+                "reply": fallback_reply,
+                "language": detected_lang,
+                "confidence": 0.6,
+                "model_used": "resilience_fallback",
+                "tools_called": tools_called_log,
+                "products": prods,
+                "logged_failed_intent": True,
+            }
 
