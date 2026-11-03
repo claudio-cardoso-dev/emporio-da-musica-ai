@@ -449,29 +449,34 @@ def test_complete_customer_journey_flow_end_to_end(multi_agent_db: Path) -> None
     assert "Fernanda Lima" in res5["reply"]
     assert "Como posso te ajudar agora?" in res5["reply"]
 
-    # Step 7: User intends to checkout
+    # Step 7: User intends to checkout -> Directly presents cart summary AND address confirmation
     cart_msg = "Quero fechar meu pedido com 1x Tagima Memphis AC-39 Nylon Natural, 1x Rozini RC-104 Nylon Estudante"
     res6 = agent.run(cart_msg, session_id=sess_id)
     assert "Resumo do seu Pedido" in res6["reply"]
     assert "889,80" in res6["reply"]
-    assert "Qual forma de pagamento você prefere" in res6["reply"]
-    assert "Pagar no PIX (5% off)" in res6["options"][0]
+    assert "Rua 14 de Maio" in res6["reply"]
+    assert "endereço de entrega está correto" in res6["reply"].lower()
+    assert "Sim, endereço correto" in res6["options"]
 
-    # Step 8: User chooses PIX -> Presents registered address
-    res7 = agent.run("Pagar no PIX", session_id=sess_id)
-    assert "Rua 14 de Maio" in res7["reply"]
-    assert "endereço de entrega está correto" in res7["reply"].lower()
-    assert "Sim, endereço correto" in res7["options"]
+    # Step 8: User confirms address -> Final summary presents payment options directly
+    res7 = agent.run("Sim, endereço correto", session_id=sess_id)
+    assert "Pedido Pronto para Finalização" in res7["reply"]
+    assert "845,31" in res7["reply"]  # 889.80 - 5% = 845.31
+    assert "Grátis" in res7["reply"]
+    assert "Fernanda Lima" in res7["reply"]
+    assert any("PIX" in opt for opt in res7["options"])
+    assert any("Parcelar" in opt for opt in res7["options"])
+    assert "Sim, confirmar pedido" not in res7["options"]
+    assert "Não, alterar endereço" not in res7["options"]
 
-    # Step 9: User confirms address -> Final summary for confirmation
-    res8 = agent.run("Sim, endereço correto", session_id=sess_id)
-    assert "Pedido Pronto para Finalização" in res8["reply"]
-    assert "845,31" in res8["reply"]  # 889.80 - 5% = 845.31
-    assert "Grátis" in res8["reply"]
-    assert "Fernanda Lima" in res8["reply"]
+    # Step 9: User chooses payment method -> Final Order Review
+    res8 = agent.run("⚡ Pagar no PIX (5% off)", session_id=sess_id)
+    assert "Resumo Final do Pedido" in res8["reply"]
+    assert "845,31" in res8["reply"]
     assert "Sim, confirmar pedido" in res8["options"]
+    assert "Não, alterar pagamento" in res8["options"]
 
-    # Step 10: User confirms order -> Concluded
+    # Step 10: User confirms order -> Concluded with success
     res9 = agent.run("Sim, confirmar pedido", session_id=sess_id)
     assert "Pedido Confirmado com Sucesso" in res9["reply"]
     assert "Fernanda Lima" in res9["reply"]
@@ -532,22 +537,25 @@ def test_pix_checkout_generates_qrcode_and_whatsapp_followup(multi_agent_db: Pat
     # Step 1: Customer identification
     agent.run("lucas.mendes@jmail.com", session_id=sess_id)
 
-    # Step 2: User closes cart with item
+    # Step 2: User closes cart with item -> Directly asks for address confirmation
     cart_msg = "Quero fechar meu pedido com 1x Tagima Memphis AC-39 Nylon Natural"
     res_close = agent.run(cart_msg, session_id=sess_id)
-    assert "Pagar no PIX (5% off)" in res_close["options"][0]
+    assert "Sim, endereço correto" in res_close["options"]
 
-    # Step 4: Choose PIX
-    res_pix = agent.run("Pagar no PIX", session_id=sess_id)
-    assert "Sim, endereço correto" in res_pix["options"]
-
-    # Step 5: Confirm address -> Pre-confirmation Summary
+    # Step 3: Confirm address -> Summary with payment options
     res_summary = agent.run("Sim, endereço correto", session_id=sess_id)
     assert "12.345.678/0001-90" not in res_summary["reply"]
     assert "QR Code" in res_summary["reply"]
-    assert "Sim, confirmar pedido" in res_summary["options"]
+    assert any("PIX" in opt for opt in res_summary["options"])
+    assert "Sim, confirmar pedido" not in res_summary["options"]
 
-    # Step 6: User clicks 'Sim, confirmar pedido' -> Final Order Confirmation
+    # Step 4: User clicks payment option -> Final Order Review
+    res_review = agent.run("⚡ Pagar no PIX (5% off)", session_id=sess_id)
+    assert "Resumo Final do Pedido" in res_review["reply"]
+    assert "Sim, confirmar pedido" in res_review["options"]
+    assert "Não, alterar pagamento" in res_review["options"]
+
+    # Step 5: User confirms order -> Final Order Confirmation with PIX QR Code & WhatsApp follow-up
     res_confirm = agent.run("Sim, confirmar pedido", session_id=sess_id)
     reply = res_confirm["reply"]
 
@@ -581,18 +589,14 @@ def test_registered_customer_checkout_never_asks_cep_again(multi_agent_db: Path)
     cart_msg = "Quero fechar meu pedido com 2x Shelby SN-100 Folk Aço Preto"
     res = agent.run(cart_msg, session_id=sess_id)
 
-    # 3. Must present cart summary, NOT ask for CEP
+    # 3. Must present cart summary, NOT ask for CEP, and directly prompt for address confirmation
     reply = res["reply"]
     assert "CEP de entrega" not in reply
     assert "preciso de duas informações rápidas" not in reply
     assert "Resumo do seu Pedido" in reply
     assert "1.098,00" in reply
-    assert "Pagar no PIX (5% off)" in res["options"][0]
-
-    # 4. Choose payment
-    res_pay = agent.run("Pagar no PIX", session_id=sess_id)
-    assert "endereço de entrega está correto" in res_pay["reply"].lower()
-    assert "Sim, endereço correto" in res_pay["options"]
+    assert "endereço de entrega está correto" in reply.lower()
+    assert "Sim, endereço correto" in res["options"]
 
 
 def test_catalog_reply_anti_redundancy_excludes_tables_when_carousel_present(multi_agent_db: Path) -> None:
@@ -638,10 +642,15 @@ def test_all_store_payment_options_from_policies(multi_agent_db: Path) -> None:
     assert "Cartão de Débito" in reply
     assert "3 dias úteis" in reply
 
-    # Verify quick-reply options contain all 4 official payment methods
-    options = res_cart["options"]
+    # Flow jumps straight to address confirmation
+    assert "Sim, endereço correto" in res_cart["options"]
+    assert "Não, alterar endereço" in res_cart["options"]
+
+    # When address is confirmed, all Section 3 methods are displayed as interactive buttons
+    res_summary = agent.run("Sim, endereço correto", session_id=sess_id)
+    options = res_summary["options"]
     assert any("PIX" in opt for opt in options)
-    assert any("Cartão de Crédito" in opt for opt in options)
+    assert any("Cartão" in opt for opt in options) or any("Parcelar" in opt for opt in options)
     assert any("Boleto Bancário" in opt for opt in options)
     assert any("Cartão de Débito" in opt for opt in options)
 
@@ -678,6 +687,87 @@ def test_all_store_payment_options_from_policies(multi_agent_db: Path) -> None:
     # Ensure card details (number, CVV, password) were NEVER requested
     assert "número do cartão" not in res_final_card["reply"].lower()
     assert "cvv" not in res_final_card["reply"].lower()
+
+
+def test_checkout_summary_presents_payment_and_installment_options(multi_agent_db: Path) -> None:
+    """
+    Verify that in final checkout summary:
+    1. Generic 'Sim, confirmar pedido' and 'Não, alterar endereço' are NOT displayed.
+    2. Interactive options display à vista payment buttons and installment button.
+    3. Clicking installment button displays released installment options breakdown and buttons.
+    4. Selecting a released installment confirms order with exact installment details.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_installments_interactive_flow"
+
+    # Identify customer
+    agent.run("lucas.mendes@jmail.com", session_id=sess_id)
+
+    # Add items to cart (2x Tagima Memphis AC-39 = R$ 859,80)
+    agent.run("Quero fechar meu pedido com 2x Tagima Memphis AC-39 Nylon Natural", session_id=sess_id)
+
+    # Address confirm step
+    agent.run("Pagar no Cartão de Crédito", session_id=sess_id)
+    res_summary = agent.run("Sim, endereço correto", session_id=sess_id)
+
+    # 1. Verify summary options are payment options
+    opts = res_summary["options"]
+    assert "Sim, confirmar pedido" not in opts
+    assert "Não, alterar endereço" not in opts
+    assert any("PIX" in opt for opt in opts)
+    assert any("1x" in opt for opt in opts)
+    assert any("Parcelar" in opt for opt in opts)
+    assert any("Boleto" in opt for opt in opts)
+    assert any("Débito" in opt for opt in opts)
+
+    # 2. Click on Parcelar -> returns table and released installment buttons
+    parcelar_btn = next(opt for opt in opts if "Parcelar" in opt)
+    res_installments = agent.run(parcelar_btn, session_id=sess_id)
+    inst_reply = res_installments["reply"]
+    inst_opts = res_installments["options"]
+
+    assert "Opções de Parcelamento" in inst_reply
+    assert "| Parcelas |" in inst_reply
+    # Total R$ 859,80 allows up to 8x sem juros (8x de R$ 107,47 >= R$ 100)
+    assert "8x" in inst_reply
+    assert any("1x" in opt for opt in inst_opts)
+    assert any("3x" in opt for opt in inst_opts)
+    assert any("8x" in opt for opt in inst_opts)
+
+    # 3. Choose 3x installment -> Presents Final Order Review with chosen 3x installment
+    opt_3x = next(opt for opt in inst_opts if "3x" in opt)
+    res_review = agent.run(opt_3x, session_id=sess_id)
+    review_reply = res_review["reply"]
+
+    assert "Resumo Final do Pedido" in review_reply
+    assert "3x" in review_reply
+    assert "sem juros" in review_reply
+    assert "Lucas" in review_reply
+    assert "Sim, confirmar pedido" in res_review["options"]
+    assert "Não, alterar pagamento" in res_review["options"]
+
+    # 4. User confirms order -> Confirms order with 3x sem juros
+    res_confirmed = agent.run("Sim, confirmar pedido", session_id=sess_id)
+    conf_reply = res_confirmed["reply"]
+
+    assert "Pedido Confirmado com Sucesso" in conf_reply
+    assert "3x" in conf_reply
+    assert "sem juros" in conf_reply
+    assert "Lucas" in conf_reply
+
+    # 5. Verify "Não, alterar pagamento" flow
+    sess_change = "test_change_payment_flow"
+    agent.run("lucas.mendes@jmail.com", session_id=sess_change)
+    agent.run("Quero fechar meu pedido com 2x Tagima Memphis AC-39 Nylon Natural", session_id=sess_change)
+    agent.run("Sim, endereço correto", session_id=sess_change)
+    # Customer chooses PIX
+    res_pix_rev = agent.run("⚡ Pagar no PIX (5% off)", session_id=sess_change)
+    assert "Não, alterar pagamento" in res_pix_rev["options"]
+    # Customer clicks "Não, alterar pagamento"
+    res_back = agent.run("Não, alterar pagamento", session_id=sess_change)
+    assert any("PIX" in opt for opt in res_back["options"])
+    assert any("Cartão" in opt or "Parcelar" in opt for opt in res_back["options"])
+
 
 
 

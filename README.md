@@ -6,7 +6,7 @@
 ![Architecture](https://img.shields.io/badge/Architecture-Specialist%20Multi--Agent-6366F1)
 ![Database](https://img.shields.io/badge/Database-SQLite%20%2B%20Hybrid%20RAG-003B57?logo=sqlite&logoColor=white)
 ![APIs](https://img.shields.io/badge/Integrations-ViaCEP%20%2B%20PIX%20SVG-059669)
-![Pytest](https://img.shields.io/badge/Tests-94%20Passed-10B981?logo=pytest&logoColor=white)
+![Pytest](https://img.shields.io/badge/Tests-95%20Passed-10B981?logo=pytest&logoColor=white)
 
 > **Assistente Conversacional de E-commerce com IA & Arquitetura Multiagente Especializada**  
 > Desenvolvido para a **Empório da Música** (*"Sua música começa aqui"* — Campo Grande/MS), fundamentado em **Clean Architecture, SOLID, Function Calling Nativo, RAG Semântico Híbrido, Motor Financeiro Determinístico e Interface Conversacional Glassmorphism**.
@@ -22,7 +22,7 @@ Este projeto entrega uma solução pronta para produção que soluciona o desafi
 1. **Arquitetura Multiagente Especialista (`IntentRouter`):** Roteamento determinístico e dinâmico que encaminha cada turno do cliente para agentes dedicados com escopo restrito de ferramentas e prompts especializados:
    - **`CustomerAgent`:** Onboarding seguro (LGPD), identificação unívoca por telefone/e-mail, termos de aceite e integração com **ViaCEP** para preenchimento e validação automática de endereço.
    - **`CatalogAgent`:** Busca e recomendação de instrumentos musicais com zero alucinação, filtros de estoque/preço e renderização de cards interativos 3D.
-   - **`CheckoutAgent`:** Fechamento de carrinho, cálculo determinístico de parcelas e descontos de 5% no PIX, verificação de frete (motoboy em Campo Grande ou transportadora regional) e simulação de QR Code PIX dinâmico (SVG).
+   - **`CheckoutAgent`:** Fechamento de carrinho, validação direta de endereço cadastrado, cálculo determinístico de parcelas sem juros (respeitando as regras de parcela mínima da política da loja) e descontos de 5% no PIX, verificação de frete (motoboy em Campo Grande ou transportadora regional), etapa intermediária de conferência do pedido e simulação de pagamento segura (sem solicitação de dados confidenciais de cartão).
    - **`SupportAgent`:** Políticas de troca/devolução (CDC), consulta de status e rastreamento de pedidos com validação estrita de titularidade e dúvidas institucionais.
 2. **Zero Alucinação Numérica e Regras de Negócio:** Consultas estruturadas em banco relacional **SQLite** (alimentado por pipeline ETL idempotente dos CSVs operacionais) acopladas ao `PricingService` para garantir conformidade matemática estrita (bloqueio de desconto duplo de PIX em promoções ativas, limites de parcelamento e regras de frete).
 3. **RAG Semântico Híbrido para Políticas da Loja (`políticas_da_loja.pdf`):** Extração hierárquica do PDF de políticas da loja, normalização de layouts e motor de busca combinando **BM25 + Expansão de Conceitos Multilíngues (PT/EN/ES) + Similaridade Fuzzy (`rapidfuzz`)**.
@@ -32,6 +32,7 @@ Este projeto entrega uma solução pronta para produção que soluciona o desafi
    - Seletores de quantidade (`-` / `+`) e adição direta ao carrinho no chat.
    - Formulários modais e inline integrados com consulta instantânea de CEP.
    - Comunicação humanizada: sem jargões técnicos de frontend (substituindo termos como "carrossel" por *"confira abaixo a lista de opções disponíveis..."*).
+   - Fluxo de checkout em duas etapas: seleção do método/parcelas $\rightarrow$ tela de conferência final com botões de confirmação (`Sim, confirmar pedido` / `Não, alterar pagamento`).
 
 ---
 
@@ -135,6 +136,12 @@ flowchart TD
 - O catálogo avalia rigorosamente a vigência de promoções (`is_active = 1`). Caso uma promoção esteja expirada (como no caso do *Takamine GD20*), o assistente informa com total clareza que o desconto anterior expirou, informa o preço de tabela e oferece a opção de 5% de desconto à vista via PIX.
 - Aplicação determinística da regra de não-cumulatividade: itens com promoção já ativa não recebem o desconto extra de PIX.
 
+### 5. Checkout em Duas Etapas e Simulação Segura de Pagamento
+- **Fluxo Estruturado:** Ao fechar o carrinho, o assistente valida o endereço cadastrado (com opção de atualização imediata via formulário/ViaCEP) e apresenta todas as opções da Seção 3 das Políticas da Loja: PIX com 5% de desconto, Boleto Bancário (3 dias úteis), Cartão de Débito, Pagamento Combinado e Cartão de Crédito sem juros.
+- **Regras Estritas de Parcelamento:** As opções de parcelas respeitam as políticas da loja (mínimo de R$ 50,00 para até 3x; R$ 80,00 de 4x a 6x; e R$ 100,00 de 7x a 12x sem juros).
+- **Resumo Final Intermediário:** Ao escolher o método ou número de parcelas, o sistema gera uma tela de conferência detalhada com itens, frete, endereço e condição de pagamento, exigindo confirmação explícita (`Sim, confirmar pedido` / `Não, alterar pagamento`) antes de registrar o pedido.
+- **Segurança e Privacidade (LGPD):** A simulação é autenticada internamente sem necessidade de o cliente fornecer dados confidenciais de cartão (número, CVV ou senhas) no chat.
+
 ---
 
 ## 🚀 Como Executar Localmente
@@ -198,7 +205,7 @@ python main.py --mode cli
 
 ---
 
-## 🧪 Suíte de Testes Automatizados (93 Testes)
+## 🧪 Suíte de Testes Automatizados (95 Testes)
 
 A suíte de testes do projeto garante 100% de confiabilidade em todas as camadas da aplicação:
 - Ingestão de banco de dados e integridade referencial dos CSVs.
