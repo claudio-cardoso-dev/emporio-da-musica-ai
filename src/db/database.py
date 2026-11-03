@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS customers (
     name TEXT NOT NULL,
     phone TEXT,
     email TEXT,
-    city TEXT
+    city TEXT,
+    address TEXT,
+    cep TEXT
 );
 
 CREATE TABLE IF NOT EXISTS products (
@@ -116,6 +118,12 @@ def db_cursor(db_path: Optional[Path] = None) -> Generator[sqlite3.Cursor, None,
 
 
 def init_schema(db_path: Optional[Path] = None) -> None:
-    """Initialize all database tables if they do not exist."""
+    """Initialize all database tables if they do not exist and ensure address columns."""
     with db_cursor(db_path) as cursor:
         cursor.executescript(SCHEMA_SQL)
+        cursor.execute("PRAGMA table_info(customers);")
+        existing_cols = {row["name"] for row in cursor.fetchall()}
+        if "address" not in existing_cols:
+            cursor.execute("ALTER TABLE customers ADD COLUMN address TEXT;")
+        if "cep" not in existing_cols:
+            cursor.execute("ALTER TABLE customers ADD COLUMN cep TEXT;")

@@ -4,11 +4,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from src.config.settings import settings
+from src.services.cep_service import CepService
 from src.services.chat_service import ChatService
+from src.services.pix_service import PixService
 
 
 class ChatRequest(BaseModel):
@@ -34,6 +36,22 @@ class ChatResponse(BaseModel):
         default_factory=list,
         description="Structured product objects returned by catalog tools for Carousel rendering.",
     )
+    active_agent: Optional[str] = Field(
+        default="catalog",
+        description="Specialist agent that handled the conversation turn (catalog, checkout, customer, support).",
+    )
+    action: Optional[str] = Field(
+        default=None,
+        description="UI action triggered in chat (e.g. 'SHOW_REGISTER_FORM', 'SHOW_ADDRESS_FORM').",
+    )
+    options: List[str] = Field(
+        default_factory=list,
+        description="Quick interactive response buttons rendered under the message.",
+    )
+    prefill: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Optional customer data to pre-fill in inline forms.",
+    )
     logged_failed_intent: bool
 
 
@@ -41,6 +59,29 @@ class ResetSessionRequest(BaseModel):
     """Payload to clear conversation history for a session."""
 
     session_id: str = Field(default="web_session_01")
+
+
+class CustomerRegisterRequest(BaseModel):
+    """Payload for registering a new customer into the store."""
+
+    name: str = Field(..., description="Customer full name.")
+    phone: Optional[str] = Field(None, description="Phone number or WhatsApp (e.g. '(67) 99999-8888').")
+    email: Optional[str] = Field(None, description="Customer email address.")
+    cep: Optional[str] = Field(None, description="8-digit Brazilian postal code (e.g. '79202-333').")
+    address: Optional[str] = Field(None, description="Delivery street address and house/apt number.")
+    city: Optional[str] = Field(None, description="City name (defaults to 'Campo Grande' or resolved via CEP).")
+
+
+class CustomerAddressRequest(BaseModel):
+    """Payload for updating delivery address of an existing customer."""
+
+    customer_identifier: str = Field(
+        ...,
+        description="Customer primary key (phone, email, or customer_id).",
+    )
+    address: str = Field(..., description="Updated street address, number, and complement.")
+    cep: Optional[str] = Field(None, description="8-digit Brazilian postal code.")
+    city: Optional[str] = Field(None, description="City name (optional, resolved via CEP if empty).")
 
 
 WEB_CHAT_HTML = """<!DOCTYPE html>
@@ -114,21 +155,6 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       display: inline-flex; align-items: center; gap: 6px;
     }
     .btn-ghost:hover { color: #fff; background: rgba(255,255,255,0.13); }
-    .btn-cart {
-      background: rgba(245, 158, 11, 0.15);
-      border: 1px solid rgba(245, 158, 11, 0.45);
-      color: #fcd34d;
-      font-weight: 600;
-      position: relative;
-    }
-    .cart-badge {
-      background: var(--accent);
-      color: #0f172a;
-      font-size: 0.72rem;
-      font-weight: 800;
-      padding: 2px 6px;
-      border-radius: 999px;
-    }
     .messages {
       flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;
     }
@@ -156,6 +182,23 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
     .md-table th { background: rgba(245, 158, 11, 0.15); color: #fcd34d; text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
     .md-table td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); }
     .md-table tr:last-child td { border-bottom: none; }
+    .md-content code {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      padding: 3px 6px;
+      border-radius: 6px;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 0.82rem;
+      color: #38bdf8;
+      word-break: break-all;
+      display: inline-block;
+      margin: 4px 0;
+      user-select: all;
+    }
+    .qr-code-box {
+      margin: 12px 0;
+      display: block;
+    }
 
     .meta-badge {
       margin-top: 10px; font-size: 0.72rem; color: var(--text-muted);
@@ -196,9 +239,9 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
     .carousel-track::-webkit-scrollbar-thumb { background: rgba(245, 158, 11, 0.4); border-radius: 999px; }
 
     .prod-card {
-      min-width: 270px;
-      max-width: 270px;
-      height: 375px;
+      min-width: 215px;
+      max-width: 215px;
+      height: 236px;
       perspective: 1000px;
       position: relative;
       background: transparent;
@@ -208,7 +251,7 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       transition: transform 0.2s ease;
     }
     .prod-card:hover {
-      transform: translateY(-4px);
+      transform: translateY(-3px);
     }
     .card-inner {
       position: relative;
@@ -216,7 +259,7 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       height: 100%;
       transform-style: preserve-3d;
       transition: transform 0.65s cubic-bezier(0.4, 0, 0.2, 1);
-      border-radius: 16px;
+      border-radius: 12px;
     }
     .card-inner.is-flipped {
       transform: rotateY(180deg);
@@ -229,14 +272,14 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       height: 100%;
       -webkit-backface-visibility: hidden;
       backface-visibility: hidden;
-      border-radius: 16px;
-      padding: 13px 14px;
+      border-radius: 12px;
+      padding: 8px 10px;
       box-sizing: border-box;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
       border: 1px solid rgba(255, 255, 255, 0.12);
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
     }
     .card-front {
       background: linear-gradient(160deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.92));
@@ -253,142 +296,144 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       z-index: 1;
     }
     .prod-top-badges {
-      display: flex; justify-content: space-between; align-items: center; gap: 6px;
+      display: flex; justify-content: space-between; align-items: center; gap: 4px;
+      width: 100%; margin-bottom: 2px;
     }
     .cat-tag {
-      font-size: 0.72rem; font-weight: 600; color: #94a3b8; background: rgba(255,255,255,0.07);
-      padding: 3px 8px; border-radius: 6px; white-space: nowrap;
-      border: 1px solid transparent;
+      font-size: 0.64rem; font-weight: 600; color: #94a3b8; background: rgba(255,255,255,0.07);
+      padding: 1px 4px; border-radius: 4px; white-space: nowrap;
+      border: 1px solid transparent; flex-shrink: 0;
     }
     .cat-tag-clickable {
-      font-size: 0.72rem; font-weight: 700; color: #38bdf8; background: rgba(56, 189, 248, 0.14);
-      border: 1px solid rgba(56, 189, 248, 0.45); padding: 3px 8px; border-radius: 6px;
-      cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all 0.2s ease;
-      font-family: inherit; white-space: nowrap;
+      font-size: 0.64rem; font-weight: 700; color: #38bdf8; background: rgba(56, 189, 248, 0.14);
+      border: 1px solid rgba(56, 189, 248, 0.45); padding: 1px 4px; border-radius: 4px;
+      cursor: pointer; display: inline-flex; align-items: center; gap: 3px; transition: all 0.2s ease;
+      font-family: inherit; white-space: nowrap; flex-shrink: 0;
     }
     .cat-tag-clickable:hover {
       background: rgba(56, 189, 248, 0.3); border-color: #38bdf8; color: #fff; transform: scale(1.04);
     }
     .btn-desc-flip {
-      font-size: 0.7rem; font-weight: 700; color: #fcd34d; background: rgba(245, 158, 11, 0.16);
-      border: 1px solid rgba(245, 158, 11, 0.4); padding: 3px 8px; border-radius: 6px;
-      cursor: pointer; display: inline-flex; align-items: center; gap: 3px; transition: all 0.2s ease;
-      white-space: nowrap; font-family: inherit;
+      font-size: 0.62rem; font-weight: 700; color: #fcd34d; background: rgba(245, 158, 11, 0.16);
+      border: 1px solid rgba(245, 158, 11, 0.4); padding: 1px 4px; border-radius: 4px;
+      cursor: pointer; display: inline-flex; align-items: center; gap: 2px; transition: all 0.2s ease;
+      white-space: nowrap; font-family: inherit; flex-shrink: 0;
     }
     .btn-desc-flip:hover {
       background: rgba(245, 158, 11, 0.32); border-color: var(--accent); color: #fff; transform: scale(1.04);
     }
     .card-back-body {
-      flex: 1; display: flex; flex-direction: column; gap: 6px; margin-top: 6px; overflow: hidden;
+      flex: 1; display: flex; flex-direction: column; gap: 3px; margin-top: 2px; overflow: hidden;
     }
     .card-back-title {
-      font-size: 0.86rem; font-weight: 700; color: #fcd34d; line-height: 1.3;
+      font-size: 0.76rem; font-weight: 700; color: #fcd34d; line-height: 1.2;
+      display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
     }
     .card-back-meta {
-      display: flex; flex-wrap: wrap; gap: 4px;
+      display: flex; flex-wrap: wrap; gap: 3px;
     }
     .meta-pill {
-      font-size: 0.68rem; background: rgba(255, 255, 255, 0.07); color: #cbd5e1;
-      padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 0.58rem; background: rgba(255, 255, 255, 0.07); color: #cbd5e1;
+      padding: 1px 3px; border-radius: 3px; border: 1px solid rgba(255, 255, 255, 0.1);
     }
     .card-back-desc-box {
       flex: 1; background: rgba(15, 23, 42, 0.75); border: 1px solid rgba(255, 255, 255, 0.08);
-      border-radius: 10px; padding: 8px 10px; overflow-y: auto;
+      border-radius: 6px; padding: 4px 6px; overflow-y: auto;
       scrollbar-width: thin; scrollbar-color: rgba(245, 158, 11, 0.4) transparent;
-      margin-top: 2px; max-height: 140px;
+      margin-top: 2px; max-height: 85px;
     }
-    .card-back-desc-box::-webkit-scrollbar { width: 4px; }
+    .card-back-desc-box::-webkit-scrollbar { width: 3px; }
     .card-back-desc-box::-webkit-scrollbar-thumb { background: rgba(245, 158, 11, 0.4); border-radius: 999px; }
     .card-back-desc-heading {
-      font-size: 0.68rem; font-weight: 700; color: #94a3b8; text-transform: uppercase;
-      letter-spacing: 0.04em; margin-bottom: 4px;
+      font-size: 0.58rem; font-weight: 700; color: #94a3b8; text-transform: uppercase;
+      letter-spacing: 0.04em; margin-bottom: 1px;
     }
     .card-back-desc-content {
-      font-size: 0.76rem; color: #e2e8f0; line-height: 1.4; white-space: pre-wrap;
+      font-size: 0.66rem; color: #e2e8f0; line-height: 1.3; white-space: pre-wrap;
     }
     .card-back-footer {
-      display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding-top: 6px;
+      display: flex; flex-direction: column; gap: 3px; margin-top: 3px; padding-top: 3px;
       border-top: 1px solid rgba(255, 255, 255, 0.08);
     }
     .card-back-price-box {
       display: flex; justify-content: space-between; align-items: baseline;
     }
     .card-back-price {
-      font-size: 0.95rem; font-weight: 800; color: #fcd34d;
+      font-size: 0.82rem; font-weight: 800; color: #fcd34d;
     }
     .card-back-pix {
-      font-size: 0.72rem; font-weight: 600; color: #6ee7b7;
+      font-size: 0.65rem; font-weight: 600; color: #6ee7b7;
     }
     .btn-return-card {
-      width: 100%; padding: 7px 10px; border-radius: 8px;
+      width: 100%; padding: 5px 6px; border-radius: 6px;
       border: 1px solid rgba(255, 255, 255, 0.15); background: rgba(255, 255, 255, 0.08);
-      color: #fff; font-weight: 700; font-size: 0.78rem; cursor: pointer;
-      display: flex; align-items: center; justify-content: center; gap: 6px;
+      color: #fff; font-weight: 700; font-size: 0.70rem; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 4px;
       transition: 0.2s; font-family: inherit;
     }
     .btn-return-card:hover {
       background: rgba(255, 255, 255, 0.18); border-color: #38bdf8; color: #38bdf8;
     }
     .promo-tag {
-      font-size: 0.68rem; font-weight: 700; background: rgba(239, 68, 68, 0.2);
+      font-size: 0.60rem; font-weight: 700; background: rgba(239, 68, 68, 0.2);
       color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.4);
-      padding: 2px 7px; border-radius: 999px;
+      padding: 1px 4px; border-radius: 999px;
     }
     .stock-tag {
-      font-size: 0.68rem; font-weight: 600; padding: 2px 7px; border-radius: 999px;
+      font-size: 0.60rem; font-weight: 600; padding: 1px 4px; border-radius: 999px;
     }
     .stock-ok { background: rgba(16, 185, 129, 0.15); color: #6ee7b7; }
     .stock-out { background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
     .prod-icon-box {
-      height: 58px; border-radius: 12px;
+      height: 32px; border-radius: 8px; margin: 2px 0;
       background: radial-gradient(circle, rgba(245, 158, 11, 0.16), rgba(15, 23, 42, 0.6));
       display: flex; align-items: center; justify-content: center;
-      font-size: 28px; border: 1px solid rgba(255,255,255,0.05);
+      font-size: 18px; border: 1px solid rgba(255,255,255,0.05);
     }
     .prod-title {
-      font-size: 0.9rem; font-weight: 700; color: #fff; line-height: 1.3;
+      font-size: 0.78rem; font-weight: 700; color: #fff; line-height: 1.2;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-      min-height: 2.35em;
+      min-height: 28px;
     }
     .prod-desc {
-      font-size: 0.75rem; color: var(--text-muted); line-height: 1.35;
+      font-size: 0.72rem; color: var(--text-muted); line-height: 1.3;
       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
     }
     .price-box {
       background: rgba(15, 23, 42, 0.7);
       border: 1px solid rgba(255,255,255,0.07);
-      border-radius: 10px;
-      padding: 8px 10px;
+      border-radius: 6px;
+      padding: 4px 6px;
     }
     .old-price {
-      font-size: 0.74rem; color: #94a3b8; text-decoration: line-through;
+      font-size: 0.64rem; color: #94a3b8; text-decoration: line-through;
     }
     .main-price {
-      font-size: 1.08rem; font-weight: 800; color: #fcd34d;
+      font-size: 0.88rem; font-weight: 800; color: #fcd34d;
     }
     .pix-price {
-      font-size: 0.75rem; color: #6ee7b7; font-weight: 600; margin-top: 2px;
+      font-size: 0.66rem; color: #6ee7b7; font-weight: 600; margin-top: 1px;
     }
     .card-actions {
-      display: flex; flex-direction: column; gap: 7px; margin-top: 2px;
+      display: flex; flex-direction: column; gap: 3px; margin-top: 3px;
     }
     .qty-row {
       display: flex; align-items: center; justify-content: space-between;
       background: rgba(15, 23, 42, 0.9); border: 1px solid var(--border);
-      border-radius: 9px; padding: 3px 6px;
+      border-radius: 6px; padding: 1px 4px;
     }
     .qty-btn {
-      width: 26px; height: 26px; border-radius: 6px; border: none;
+      width: 20px; height: 20px; border-radius: 4px; border: none;
       background: rgba(255,255,255,0.08); color: #fff; font-weight: 700;
-      cursor: pointer; transition: 0.15s;
+      cursor: pointer; transition: 0.15s; font-size: 0.75rem;
     }
     .qty-btn:hover:not(:disabled) { background: var(--accent); color: #0f172a; }
-    .qty-val { font-size: 0.85rem; font-weight: 700; color: #fff; min-width: 24px; text-align: center; }
+    .qty-val { font-size: 0.75rem; font-weight: 700; color: #fff; min-width: 16px; text-align: center; }
     .btn-add-cart {
-      width: 100%; padding: 9px 10px; border-radius: 9px; border: none;
+      width: 100%; padding: 5px 6px; border-radius: 6px; border: none;
       background: linear-gradient(135deg, #f59e0b, #d97706);
-      color: #0f172a; font-weight: 800; font-size: 0.8rem; cursor: pointer;
-      display: flex; align-items: center; justify-content: center; gap: 6px;
+      color: #0f172a; font-weight: 800; font-size: 0.72rem; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 4px;
       transition: 0.2s;
     }
     .btn-add-cart:hover:not(:disabled) { filter: brightness(1.1); transform: scale(1.01); }
@@ -438,6 +483,78 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
     }
     .btn-checkout:hover { filter: brightness(1.1); }
 
+    /* Customer Registration & Address Modal */
+    .modal-backdrop {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(10, 15, 29, 0.82); backdrop-filter: blur(8px);
+      z-index: 60; display: none; align-items: center; justify-content: center;
+      padding: 16px;
+    }
+    .modal-backdrop.open { display: flex; }
+    .customer-modal {
+      width: 100%; max-width: 520px; max-height: 90vh;
+      background: linear-gradient(165deg, rgba(20, 30, 48, 0.98), rgba(15, 23, 42, 0.98));
+      border: 1px solid rgba(245, 158, 11, 0.45); border-radius: 18px;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .modal-header {
+      padding: 16px 20px; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .modal-title { font-size: 1rem; font-weight: 700; color: #fcd34d; display: flex; align-items: center; gap: 8px; }
+    .btn-close-modal {
+      background: transparent; border: none; color: #94a3b8; font-size: 1.2rem; cursor: pointer;
+      padding: 4px 8px; border-radius: 6px; line-height: 1;
+    }
+    .btn-close-modal:hover { color: #fff; background: rgba(255,255,255,0.1); }
+    .modal-tabs {
+      display: flex; border-bottom: 1px solid var(--border); background: rgba(15, 23, 42, 0.6);
+    }
+    .modal-tab-btn {
+      flex: 1; padding: 11px 16px; background: transparent; border: none;
+      color: #94a3b8; font-weight: 600; font-size: 0.82rem; cursor: pointer;
+      border-bottom: 2px solid transparent; transition: all 0.2s; font-family: inherit;
+    }
+    .modal-tab-btn.active {
+      color: #fcd34d; border-bottom-color: var(--accent); background: rgba(245, 158, 11, 0.08);
+    }
+    .modal-body {
+      padding: 18px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;
+    }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-label { font-size: 0.76rem; font-weight: 600; color: #cbd5e1; }
+    .form-row { display: flex; gap: 10px; }
+    .form-input {
+      width: 100%; background: rgba(15, 23, 42, 0.85); border: 1px solid var(--border);
+      border-radius: 10px; padding: 9px 12px; color: #fff; font-size: 0.88rem; outline: none;
+      font-family: inherit; transition: 0.2s;
+    }
+    .form-input:focus { border-color: var(--accent); }
+    .cep-row { display: flex; gap: 8px; align-items: center; }
+    .btn-search-cep {
+      background: rgba(245, 158, 11, 0.2); border: 1px solid rgba(245, 158, 11, 0.4);
+      color: #fcd34d; padding: 9px 14px; border-radius: 10px; font-weight: 700;
+      font-size: 0.8rem; cursor: pointer; white-space: nowrap; font-family: inherit; transition: 0.2s;
+    }
+    .btn-search-cep:hover { background: rgba(245, 158, 11, 0.35); }
+    .cep-feedback { font-size: 0.74rem; color: #6ee7b7; margin-top: 2px; }
+    .modal-footer {
+      padding: 14px 20px; border-top: 1px solid var(--border); background: rgba(15, 23, 42, 0.6);
+      display: flex; justify-content: flex-end; gap: 10px;
+    }
+    .btn-submit-modal {
+      background: var(--accent); color: #0f172a; font-weight: 800; border: none;
+      padding: 10px 18px; border-radius: 10px; cursor: pointer; font-size: 0.86rem;
+      transition: 0.2s; font-family: inherit;
+    }
+    .btn-submit-modal:hover { background: var(--accent-hover); color: #fff; }
+    .alert-banner {
+      padding: 8px 12px; border-radius: 8px; font-size: 0.8rem; display: none; margin-bottom: 6px;
+    }
+    .alert-banner.success { background: rgba(16, 185, 129, 0.2); border: 1px solid #10b981; color: #6ee7b7; display: block; }
+    .alert-banner.error { background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: #fca5a5; display: block; }
+
     .chips {
       padding: 10px 20px; display: flex; gap: 8px; overflow-x: auto;
       border-top: 1px solid var(--border); background: rgba(15, 23, 42, 0.45);
@@ -463,6 +580,47 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       border: none; padding: 0 22px; border-radius: 12px; cursor: pointer; transition: 0.2s;
     }
     .btn-send:hover { background: var(--accent-hover); color: #fff; }
+
+    /* Inline Interactive Quick Reply Options */
+    .chat-options-row {
+      display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px;
+    }
+    .chat-option-btn {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(234, 88, 12, 0.2));
+      border: 1px solid rgba(245, 158, 11, 0.55); color: #fcd34d; font-weight: 700;
+      padding: 8px 14px; border-radius: 10px; font-size: 0.82rem; cursor: pointer;
+      font-family: inherit; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .chat-option-btn:hover {
+      background: linear-gradient(135deg, #f59e0b, #ea580c); color: #0f172a; transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.35);
+    }
+
+    /* Inline Chat Forms (Cadastro e Endereço) */
+    .chat-form-card {
+      margin-top: 12px; background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(245, 158, 11, 0.45); border-radius: 14px;
+      padding: 14px 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+      animation: fadeInForm 0.3s ease-out;
+    }
+    @keyframes fadeInForm {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .chat-form-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+      padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .chat-form-icon { font-size: 1.4rem; }
+    .chat-form-title { font-size: 0.92rem; font-weight: 700; color: #fcd34d; }
+    .chat-form-subtitle { font-size: 0.74rem; color: #94a3b8; }
+    .chat-form-body { display: flex; flex-direction: column; gap: 10px; }
+    .btn-chat-form-submit {
+      margin-top: 6px; background: var(--accent); color: #0f172a;
+      font-weight: 800; border: none; padding: 10px 16px; border-radius: 10px;
+      cursor: pointer; font-size: 0.84rem; font-family: inherit; transition: 0.2s;
+    }
+    .btn-chat-form-submit:hover { background: var(--accent-hover); color: #fff; }
   </style>
 </head>
 <body>
@@ -476,54 +634,131 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
         </div>
       </div>
       <div class="header-actions">
-        <button class="btn-ghost btn-cart" onclick="toggleCart()">
-          🛒 Carrinho <span class="cart-badge" id="cartCount">0</span>
-        </button>
         <button class="btn-ghost" onclick="resetChat()">🔄 Reiniciar</button>
         <a class="btn-ghost" href="/docs" target="_blank">📄 Swagger API</a>
       </div>
     </div>
 
-    <!-- Shopping Cart Floating Drawer -->
-    <div class="cart-drawer" id="cartDrawer">
-      <div class="cart-drawer-header">
-        <span>🛒 Seu Carrinho Musical</span>
-        <button class="btn-ghost" style="padding:3px 8px;" onclick="toggleCart()">✕</button>
-      </div>
-      <div class="cart-items" id="cartItemsList">
-        <p style="color:#94a3b8; font-size:0.82rem; text-align:center; padding:16px 0;">Seu carrinho está vazio.</p>
-      </div>
-      <div class="cart-footer" id="cartFooter" style="display:none;">
-        <div class="cart-total-row">
-          <span>Total Cartão (até 12x):</span>
-          <strong id="cartTotalRegular">R$ 0,00</strong>
+    <!-- Customer Registration & Address Modal (Busca CEP) -->
+    <div class="modal-backdrop" id="customerModalBackdrop" onclick="if(event.target===this) closeCustomerModal()">
+      <div class="customer-modal">
+        <div class="modal-header">
+          <div class="modal-title"><span>👤</span> Cadastro &amp; Endereço (ViaCEP)</div>
+          <button class="btn-close-modal" onclick="closeCustomerModal()">✕</button>
         </div>
-        <div class="cart-total-row pix">
-          <span>Total à vista no PIX:</span>
-          <strong id="cartTotalPix">R$ 0,00</strong>
+        <div class="modal-tabs">
+          <button class="modal-tab-btn active" id="tabBtnRegister" onclick="switchCustomerTab('register')">Novo Cadastro</button>
+          <button class="modal-tab-btn" id="tabBtnAddress" onclick="switchCustomerTab('address')">Atualizar Endereço</button>
         </div>
-        <button class="btn-checkout" onclick="simulateCartWithAgent()">
-          ⚡ Simular Pagamento e Frete no Chat
-        </button>
+        <div class="modal-body">
+          <div id="modalAlert" class="alert-banner"></div>
+
+          <!-- ABA 1: NOVO CADASTRO -->
+          <div id="tabContentRegister">
+            <div class="form-group">
+              <label class="form-label">Nome Completo *</label>
+              <input type="text" id="regName" class="form-input" placeholder="Ex: Lucas Gabriel Silveira" />
+            </div>
+            <div class="form-row" style="margin-top:8px;">
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Telefone / WhatsApp *</label>
+                <input type="text" id="regPhone" class="form-input" placeholder="(67) 99123-4567" />
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">E-mail *</label>
+                <input type="email" id="regEmail" class="form-input" placeholder="lucas@exemplo.com" />
+              </div>
+            </div>
+            <div class="form-group" style="margin-top:8px;">
+              <label class="form-label">CEP (Busca Automática ViaCEP) *</label>
+              <div class="cep-row">
+                <input type="text" id="regCep" class="form-input" placeholder="79202-333" maxlength="9" oninput="handleCepInput('register')" />
+                <button type="button" class="btn-search-cep" onclick="triggerCepSearch('register')">🔍 Buscar CEP</button>
+              </div>
+              <div id="regCepFeedback" class="cep-feedback"></div>
+            </div>
+            <div class="form-group" style="margin-top:8px;">
+              <label class="form-label">Logradouro / Rua</label>
+              <input type="text" id="regAddress" class="form-input" placeholder="Rua / Av..." />
+            </div>
+            <div class="form-row" style="margin-top:8px;">
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Número e Complemento</label>
+                <input type="text" id="regNumber" class="form-input" placeholder="123, Apto 402" />
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Bairro</label>
+                <input type="text" id="regNeighborhood" class="form-input" placeholder="Centro" />
+              </div>
+            </div>
+            <div class="form-row" style="margin-top:8px;">
+              <div class="form-group" style="flex:2;">
+                <label class="form-label">Cidade</label>
+                <input type="text" id="regCity" class="form-input" value="Campo Grande" />
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">UF</label>
+                <input type="text" id="regState" class="form-input" value="MS" maxlength="2" />
+              </div>
+            </div>
+          </div>
+
+          <!-- ABA 2: ATUALIZAR ENDEREÇO -->
+          <div id="tabContentAddress" style="display:none;">
+            <div class="form-group">
+              <label class="form-label">Chave de Identificação (Telefone ou E-mail cadastrado) *</label>
+              <input type="text" id="updIdentifier" class="form-input" placeholder="(67) 99123-4567 ou email@exemplo.com" />
+            </div>
+            <div class="form-group" style="margin-top:8px;">
+              <label class="form-label">Novo CEP (Busca Automática ViaCEP)</label>
+              <div class="cep-row">
+                <input type="text" id="updCep" class="form-input" placeholder="79202-333" maxlength="9" oninput="handleCepInput('address')" />
+                <button type="button" class="btn-search-cep" onclick="triggerCepSearch('address')">🔍 Buscar CEP</button>
+              </div>
+              <div id="updCepFeedback" class="cep-feedback"></div>
+            </div>
+            <div class="form-group" style="margin-top:8px;">
+              <label class="form-label">Novo Logradouro / Rua *</label>
+              <input type="text" id="updAddress" class="form-input" placeholder="Rua / Av..." />
+            </div>
+            <div class="form-row" style="margin-top:8px;">
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Número e Complemento</label>
+                <input type="text" id="updNumber" class="form-input" placeholder="456, Bloco B" />
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Bairro</label>
+                <input type="text" id="updNeighborhood" class="form-input" placeholder="Bairro" />
+              </div>
+            </div>
+            <div class="form-row" style="margin-top:8px;">
+              <div class="form-group" style="flex:2;">
+                <label class="form-label">Cidade</label>
+                <input type="text" id="updCity" class="form-input" value="Campo Grande" />
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">UF</label>
+                <input type="text" id="updState" class="form-input" value="MS" maxlength="2" />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-ghost" onclick="closeCustomerModal()">Cancelar</button>
+          <button class="btn-submit-modal" id="btnSubmitModal" onclick="submitCustomerForm()">Salvar Cadastro</button>
+        </div>
       </div>
     </div>
 
     <div class="messages" id="messages">
       <div class="msg-wrapper">
         <div class="msg bot">
-          <div class="md-content">Olá! Bem-vindo(a) à <strong>Empório da Música</strong>! 🎶<br/>Sou o assistente virtual da loja. Quando você buscar instrumentos, exibirei um <strong>carrossel interativo de produtos</strong> onde você pode escolher a quantidade e adicionar ao carrinho para simular parcelamentos e frete. Como posso te ajudar hoje?</div>
+          <div class="md-content">Olá! Seja muito bem-vindo(a) à <strong>Empório da Música</strong>! 🎸🎶<br/><br/>Sou seu assistente virtual. Para começarmos o seu atendimento e identificarmos seu cadastro, por favor informe o seu <strong>número de telefone/WhatsApp</strong> ou <strong>e-mail</strong>.</div>
         </div>
       </div>
     </div>
 
-    <div class="chips">
-      <span class="chip" onclick="sendQuick('Quais opções de violões disponíveis custando até R$1000?')">🎸 Violões até R$1000</span>
-      <span class="chip" onclick="sendQuick('Quais opções de ukuleles disponíveis?')">🏝️ Ver Ukuleles</span>
-      <span class="chip" onclick="sendQuick('Quais produtos estão em promoção ativa hoje?')">🔥 Produtos em Promoção</span>
-      <span class="chip" onclick="sendQuick('Quanto custa o Takamine GD20?')">💰 Preço Takamine GD20</span>
-      <span class="chip" onclick="sendQuick('Qual o endereço e horário de funcionamento da loja?')">📍 Endereço e Horário</span>
-      <span class="chip" onclick="sendQuick('Quais informações posso usar para consultar meu pedido ou rastreio?')">📦 Consultar Pedido / Rastreio</span>
-    </div>
+    <div class="chips" id="chipsContainer" style="display:none;"></div>
 
     <div class="input-area">
       <input type="text" id="userInput" placeholder="Digite sua mensagem em Português, Inglês ou Espanhol..." onkeydown="if(event.key==='Enter') sendMessage()" />
@@ -563,6 +798,8 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
 
     function formatInlineMd(text) {
       let s = escapeHtml(text);
+      // Markdown Images: ![alt](url)
+      s = s.replace(/!\\[([^\\]]*)\\]\\(([^)]+)\\)/g, '<div class="qr-code-box"><img src="$2" alt="$1" style="max-width:230px; width:100%; height:auto; border-radius:12px; background:#ffffff; padding:10px; box-shadow:0 8px 24px rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.2); display:block;" /></div>');
       s = s.replace(/~~(.+?)~~/g, "<del>$1</del>");
       s = s.replace(/\\*\\*(.+?)\\*\\*/g, "<strong>$1</strong>");
       s = s.replace(/\\*(.+?)\\*/g, "<em>$1</em>");
@@ -579,7 +816,7 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
         const line = lines[i].trim();
 
         // Markdown Table Detection
-        if (line.startsWith("|") && i + 1 < lines.length && lines[i + 1].trim().match(/^\\|[\\s\\-:|]+\\|$/)) {
+        if (line.startsWith("|") && i + 1 < lines.length && /^[|\\s:-]+$/.test(lines[i + 1].trim())) {
           const headers = line.split("|").slice(1, -1).map(h => formatInlineMd(h.trim()));
           i += 2;
           let rowsHtml = "";
@@ -798,16 +1035,35 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
           btnEl.style.background = "";
         }, 1000);
       }
+
+      const totalItems = cart.reduce((acc, item) => acc + item.qty, 0);
+      const totalRegular = cart.reduce((acc, i) => acc + (i.product.effective_price_brl || i.product.price_brl) * i.qty, 0);
+      const itemLabel = totalItems === 1 ? "1 item" : `${totalItems} itens`;
+      appendMsg(
+        `🛒 **${qty}x ${escapeHtml(product.name)}** adicionado ao seu carrinho!\n\n` +
+        `Seu carrinho agora possui **${itemLabel}** (Total: **${formatBRL(totalRegular)}**).\n\n` +
+        `Deseja adicionar mais algum instrumento ou ver mais opções?`,
+        "bot",
+        {
+          active_agent: "checkout",
+          options: ["🎸 Ver mais produtos", "🛒 Ver Carrinho", "⚡ Fechar Pedido"]
+        }
+      );
     }
 
     function removeFromCart(productId) {
+      const found = cart.find(item => item.product.product_id === productId);
+      const pName = found ? found.product.name : "Item";
       cart = cart.filter(item => item.product.product_id !== productId);
       updateCartUI();
+      appendMsg(`🗑️ **${pName}** foi removido do seu carrinho.`, "bot", {
+        active_agent: "checkout",
+        options: cart.length > 0 ? ["🛒 Ver Carrinho", "⚡ Fechar Pedido", "🎸 Continuar Comprando"] : ["🎸 Violões até R$1000", "🌴 Ver Ukuleles", "🔥 Produtos em Promoção"]
+      });
     }
 
     function toggleCart() {
-      const drawer = document.getElementById("cartDrawer");
-      drawer.classList.toggle("open");
+      showCartInChat();
     }
 
     function updateCartUI() {
@@ -818,7 +1074,9 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       const pixTotalEl = document.getElementById("cartTotalPix");
 
       const totalItems = cart.reduce((acc, item) => acc + item.qty, 0);
-      countEl.textContent = String(totalItems);
+      if (countEl) countEl.textContent = String(totalItems);
+
+      if (!listEl || !footerEl) return;
 
       if (cart.length === 0) {
         listEl.innerHTML = '<p style="color:#94a3b8; font-size:0.82rem; text-align:center; padding:16px 0;">Seu carrinho está vazio.</p>';
@@ -847,15 +1105,94 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
         `;
       }).join("");
 
-      regTotalEl.textContent = formatBRL(sumRegular);
-      pixTotalEl.textContent = formatBRL(sumPix);
+      if (regTotalEl) regTotalEl.textContent = formatBRL(sumRegular);
+      if (pixTotalEl) pixTotalEl.textContent = formatBRL(sumPix);
+    }
+
+    function showCartInChat() {
+      if (!cart || cart.length === 0) {
+        appendMsg(
+          `🛒 **Seu carrinho está vazio no momento.**\n\nVocê ainda não adicionou nenhum produto. Que tal conferir os instrumentos disponíveis no catálogo?`,
+          "bot",
+          {
+            active_agent: "checkout",
+            options: ["🎸 Violões até R$1000", "🌴 Ver Ukuleles", "🔥 Produtos em Promoção"]
+          }
+        );
+        return;
+      }
+
+      let totalRegular = 0;
+      let totalPix = 0;
+      let mdRows = "";
+
+      cart.forEach(item => {
+        const p = item.product;
+        const uPrice = p.effective_price_brl || p.price_brl;
+        const sub = uPrice * item.qty;
+        const pPix = p.pix_price_brl || (uPrice * 0.95);
+        totalRegular += sub;
+        totalPix += (pPix * item.qty);
+        mdRows += `| ${p.name} | ${item.qty} | ${formatBRL(uPrice)} | ${formatBRL(sub)} |\n`;
+      });
+
+      const totalItems = cart.reduce((acc, item) => acc + item.qty, 0);
+      const itemWord = totalItems === 1 ? "item" : "itens";
+
+      // Maximum installments based on store policy:
+      // 1x-3x: min R$50 | 4x-6x: min R$80 | 7x-12x: min R$100
+      let maxInst = 1;
+      for (let n = 12; n >= 1; n--) {
+        const val = totalRegular / n;
+        if (n >= 7 && val >= 100.0) { maxInst = n; break; }
+        if (n >= 4 && n <= 6 && val >= 80.0) { maxInst = n; break; }
+        if (n >= 2 && n <= 3 && val >= 50.0) { maxInst = n; break; }
+        if (n === 1) { maxInst = 1; break; }
+      }
+
+      const instVal = totalRegular / maxInst;
+      const instText = maxInst > 1 
+        ? `em até **${maxInst}x de ${formatBRL(instVal)} sem juros**` 
+        : `1x de ${formatBRL(totalRegular)}`;
+
+      const freeShipping = totalRegular >= 300;
+      const shippingText = freeShipping 
+        ? "• 🚚 **Frete Grátis** para Campo Grande/MS via motoboy próprio da loja (1 a 3 dias úteis)."
+        : "• 🚚 **Frete para Campo Grande/MS:** R$ 25,00 via motoboy próprio (1 a 3 dias úteis).";
+
+      const combinedText = totalRegular >= 2000.0 
+        ? `• 🌟 **Pagamento Combinado (PIX + Cartão):** Elegível para este pedido (valor total acima de R$ 2.000,00)!\n` 
+        : "";
+
+      const cartMd = `### 🛒 Itens no seu Carrinho (${totalItems} ${itemWord})\n\n` +
+        `| Item | Quantidade | Valor Unitário | Subtotal |\n` +
+        `| :--- | :---: | :---: | :---: |\n` +
+        mdRows +
+        `| **Total do Pedido** | **${totalItems} ${itemWord}** | | **${formatBRL(totalRegular)}** |\n\n` +
+        `### 💳 Opções de Pagamento:\n` +
+        `• ⚡ **À vista no PIX:** **${formatBRL(totalPix)}** (5% de desconto à vista)\n` +
+        `• 💳 **Cartão de Crédito:** ${instText}\n` +
+        combinedText +
+        `\n### 📦 Entrega:\n` +
+        `${shippingText}\n\n` +
+        `--- \n` +
+        `Deseja fechar o seu pedido agora ou adicionar mais produtos?`;
+
+      appendMsg(cartMd, "bot", {
+        active_agent: "checkout",
+        options: ["⚡ Fechar Pedido", "🗑️ Esvaziar Carrinho", "🎸 Continuar Comprando"]
+      });
     }
 
     function simulateCartWithAgent() {
-      if (cart.length === 0) return;
-      const summary = cart.map(i => `${i.qty}x ${i.product.name}`).join(", ");
-      document.getElementById("cartDrawer").classList.remove("open");
-      sendQuick(`Selecionei no carrinho: ${summary}. Como ficam as opções de pagamento (PIX e parcelamento sem juros) e o frete para Campo Grande?`);
+      if (cart.length === 0) {
+        showCartInChat();
+        return;
+      }
+      const totalRegular = cart.reduce((acc, i) => acc + (i.product.effective_price_brl || i.product.price_brl) * i.qty, 0);
+      const itemsList = cart.map(i => `${i.qty}x ${i.product.name} (R$ ${(i.product.effective_price_brl || i.product.price_brl).toFixed(2).replace('.', ',')})`).join(", ");
+      const totalFormatted = totalRegular.toFixed(2).replace('.', ',');
+      sendQuick(`Selecionei no carrinho: ${itemsList}. Valor total: R$ ${totalFormatted}. Quero fechar meu pedido!`);
     }
 
     function appendMsg(text, role, meta = null) {
@@ -870,6 +1207,125 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
         mdDiv.className = "md-content";
         mdDiv.innerHTML = renderMarkdown(text);
         div.appendChild(mdDiv);
+
+        // 1. Interactive quick options (e.g. "Sim, sou novo cliente")
+        if (meta && Array.isArray(meta.options) && meta.options.length > 0) {
+          const optRow = document.createElement("div");
+          optRow.className = "chat-options-row";
+          meta.options.forEach(optText => {
+            const btn = document.createElement("button");
+            btn.className = "chat-option-btn";
+            btn.textContent = optText;
+            btn.onclick = () => {
+              optRow.style.display = "none";
+              const clean = optText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9\\s]/g, '').trim();
+              if (clean.includes("fechar pedido") || clean.includes("finalizar compra") || clean.includes("fechar carrinho") || clean.includes("concluir pedido")) {
+                simulateCartWithAgent();
+              } else if (clean.includes("ver carrinho")) {
+                showCartInChat();
+              } else if (clean.includes("continuar comprando") || clean.includes("ver mais produtos")) {
+                sendQuick("Quero ver mais instrumentos musicais");
+              } else {
+                sendQuick(optText);
+              }
+            };
+            optRow.appendChild(btn);
+          });
+          div.appendChild(optRow);
+        }
+
+        // 2. Inline Registration Form (Step 1)
+        if (meta && meta.action === "SHOW_REGISTER_FORM") {
+          const formCard = document.createElement("div");
+          formCard.className = "chat-form-card";
+          formCard.id = "chatRegisterForm";
+          const prefillEmail = (meta.prefill && meta.prefill.email) || window.lastUserEmail || "";
+          const prefillPhone = (meta.prefill && meta.prefill.phone) || window.lastUserPhone || "";
+          formCard.innerHTML = `
+            <div class="chat-form-header">
+              <span class="chat-form-icon">👤</span>
+              <div>
+                <div class="chat-form-title">Cadastro de Novo Cliente</div>
+                <div class="chat-form-subtitle">Preencha seus dados de contato para prosseguirmos</div>
+              </div>
+            </div>
+            <div class="chat-form-body">
+              <div class="form-group">
+                <label class="form-label">Nome Completo *</label>
+                <input type="text" class="form-input" id="chatRegName" placeholder="Ex: Carlos Eduardo Silva" />
+              </div>
+              <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                  <label class="form-label">Telefone / WhatsApp *</label>
+                  <input type="tel" class="form-input" id="chatRegPhone" value="${prefillPhone}" placeholder="(67) 99999-8888" />
+                </div>
+                <div class="form-group" style="flex:1;">
+                  <label class="form-label">E-mail</label>
+                  <input type="email" class="form-input" id="chatRegEmail" value="${prefillEmail}" placeholder="seu@email.com" />
+                </div>
+              </div>
+              <div id="chatRegAlert" style="display:none; color:#fca5a5; font-size:0.75rem;"></div>
+              <button class="btn-chat-form-submit" onclick="submitChatRegisterForm()">
+                Avançar para Endereço ➔
+              </button>
+            </div>
+          `;
+          div.appendChild(formCard);
+        }
+
+        // 3. Inline Address Form (Step 2)
+        if (meta && meta.action === "SHOW_ADDRESS_FORM") {
+          const formCard = document.createElement("div");
+          formCard.className = "chat-form-card";
+          formCard.id = "chatAddressForm";
+          formCard.innerHTML = `
+            <div class="chat-form-header">
+              <span class="chat-form-icon">📍</span>
+              <div>
+                <div class="chat-form-title">Endereço de Entrega</div>
+                <div class="chat-form-subtitle">Digite seu CEP para buscar rua e bairro automaticamente</div>
+              </div>
+            </div>
+            <div class="chat-form-body">
+              <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                  <label class="form-label">CEP (Busca CEP) *</label>
+                  <input type="text" class="form-input" id="chatAddrCep" placeholder="79202-333" oninput="handleChatCepInput()" />
+                </div>
+                <div class="form-group" style="flex:2;">
+                  <label class="form-label">Logradouro / Rua *</label>
+                  <input type="text" class="form-input" id="chatAddrStreet" placeholder="Rua ou Avenida" />
+                </div>
+              </div>
+              <div id="chatCepFeedback" class="cep-feedback"></div>
+              <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                  <label class="form-label">Número *</label>
+                  <input type="text" class="form-input" id="chatAddrNumber" placeholder="123" />
+                </div>
+                <div class="form-group" style="flex:2;">
+                  <label class="form-label">Complemento</label>
+                  <input type="text" class="form-input" id="chatAddrComplement" placeholder="Apto 4B, Bloco C (opcional)" />
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                  <label class="form-label">Bairro</label>
+                  <input type="text" class="form-input" id="chatAddrNeighborhood" placeholder="Bairro" />
+                </div>
+                <div class="form-group" style="flex:1;">
+                  <label class="form-label">Cidade / UF</label>
+                  <input type="text" class="form-input" id="chatAddrCity" placeholder="Campo Grande - MS" />
+                </div>
+              </div>
+              <div id="chatAddrAlert" style="display:none; color:#fca5a5; font-size:0.75rem;"></div>
+              <button class="btn-chat-form-submit" onclick="submitChatAddressForm()">
+                Finalizar Cadastro Completo ✔
+              </button>
+            </div>
+          `;
+          div.appendChild(formCard);
+        }
       } else {
         div.textContent = text;
       }
@@ -878,7 +1334,8 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
         const badge = document.createElement("div");
         badge.className = "meta-badge";
         const tools = (meta.tools_called || []).map(t => t.tool).join(", ") || "direct";
-        badge.textContent = `Model: ${meta.model_used} | Lang: ${meta.language} | Tools: ${tools}`;
+        const agentTag = meta.active_agent ? `Agent: ${meta.active_agent} | ` : "";
+        badge.textContent = `${agentTag}Model: ${meta.model_used} | Lang: ${meta.language} | Tools: ${tools}`;
         div.appendChild(badge);
       }
 
@@ -893,6 +1350,109 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
+    let pendingChatCustomer = { name: "", phone: "", email: "" };
+
+    function submitChatRegisterForm() {
+      const name = document.getElementById("chatRegName").value.trim();
+      const phone = document.getElementById("chatRegPhone").value.trim();
+      const email = document.getElementById("chatRegEmail").value.trim();
+      const alertEl = document.getElementById("chatRegAlert");
+
+      if (!name) {
+        alertEl.textContent = "Por favor, informe seu nome completo.";
+        alertEl.style.display = "block";
+        return;
+      }
+      if (!phone && !email) {
+        alertEl.textContent = "Informe pelo menos seu telefone ou e-mail.";
+        alertEl.style.display = "block";
+        return;
+      }
+      alertEl.style.display = "none";
+      pendingChatCustomer = { name, phone, email };
+
+      const formCard = document.getElementById("chatRegisterForm");
+      if (formCard) formCard.style.display = "none";
+
+      const summaryText = `Preenchi meus dados: Nome: ${name}, Contato: ${phone || email}.`;
+      appendMsg(summaryText, "user");
+
+      const payloadMsg = "[DADOS_DO_CADASTRO]: " + JSON.stringify(pendingChatCustomer);
+      sendMessageDirect(payloadMsg);
+    }
+
+    let chatCepTimeout = null;
+    function handleChatCepInput() {
+      clearTimeout(chatCepTimeout);
+      chatCepTimeout = setTimeout(async () => {
+        const cepInput = document.getElementById("chatAddrCep");
+        const feedbackEl = document.getElementById("chatCepFeedback");
+        if (!cepInput || !feedbackEl) return;
+        const rawCep = (cepInput.value || "").replace(/\\D/g, "");
+        if (rawCep.length !== 8) {
+          if (rawCep.length > 0) feedbackEl.textContent = "Digite os 8 dígitos do CEP.";
+          return;
+        }
+        feedbackEl.textContent = "Buscando CEP no ViaCEP...";
+        feedbackEl.style.color = "#fcd34d";
+        try {
+          const res = await fetch(`/api/cep/${rawCep}`);
+          const data = await res.json();
+          if (data && data.found) {
+            feedbackEl.textContent = `✓ ${data.city} - ${data.state} (${data.neighborhood || "Centro"})`;
+            feedbackEl.style.color = "#6ee7b7";
+            if (data.street) document.getElementById("chatAddrStreet").value = data.street;
+            if (data.neighborhood) document.getElementById("chatAddrNeighborhood").value = data.neighborhood;
+            if (data.city) document.getElementById("chatAddrCity").value = `${data.city} - ${data.state}`;
+          } else {
+            feedbackEl.textContent = "CEP não localizado. Preencha o endereço manualmente.";
+            feedbackEl.style.color = "#fca5a5";
+          }
+        } catch (e) {
+          feedbackEl.textContent = "Erro ao buscar CEP. Preencha manualmente.";
+          feedbackEl.style.color = "#fca5a5";
+        }
+      }, 500);
+    }
+
+    function submitChatAddressForm() {
+      const cep = document.getElementById("chatAddrCep").value.trim();
+      const street = document.getElementById("chatAddrStreet").value.trim();
+      const number = document.getElementById("chatAddrNumber").value.trim();
+      const complement = document.getElementById("chatAddrComplement").value.trim();
+      const neighborhood = document.getElementById("chatAddrNeighborhood").value.trim();
+      const city = document.getElementById("chatAddrCity").value.trim();
+      const alertEl = document.getElementById("chatAddrAlert");
+
+      if (!street) {
+        alertEl.textContent = "Por favor, informe a rua ou logradouro.";
+        alertEl.style.display = "block";
+        return;
+      }
+
+      alertEl.style.display = "none";
+      const formCard = document.getElementById("chatAddressForm");
+      if (formCard) formCard.style.display = "none";
+
+      const addrData = {
+        name: pendingChatCustomer.name,
+        phone: pendingChatCustomer.phone,
+        email: pendingChatCustomer.email,
+        cep: cep || null,
+        street: street,
+        number: number,
+        complement: complement,
+        neighborhood: neighborhood,
+        city: city || "Campo Grande - MS",
+      };
+
+      const summaryText = `Preenchi meu endereço: ${street}, ${number || "s/n"} - ${neighborhood}, ${city} (CEP: ${cep || "não informado"}).`;
+      appendMsg(summaryText, "user");
+
+      const payloadMsg = "[DADOS_DO_ENDERECO]: " + JSON.stringify(addrData);
+      sendMessageDirect(payloadMsg);
+    }
+
     function sendQuick(text) {
       inputEl.value = text;
       sendMessage();
@@ -902,6 +1462,60 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       const text = inputEl.value.trim();
       if (!text) return;
       inputEl.value = "";
+      if (text.includes("@")) {
+        const m = text.match(/[\\w\\.-]+@[\\w\\.-]+\\.\\w+/);
+        if (m) window.lastUserEmail = m[0];
+      }
+      const digits = text.replace(/\\D/g, "");
+      if (digits.length >= 8 && digits.length <= 11) {
+        window.lastUserPhone = text;
+      }
+
+      const lower = text.toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").trim();
+
+      // Intercept Clear Cart
+      if (lower === "esvaziar carrinho" || lower === "limpar carrinho" || lower === "remover itens do carrinho" || lower === "apagar carrinho") {
+        appendMsg(text, "user");
+        cart = [];
+        updateCartUI();
+        appendMsg("🗑️ **Seu carrinho foi esvaziado.**\\n\\nComo posso te ajudar agora? Você pode explorar nossos instrumentos musicais:", "bot", {
+          active_agent: "checkout",
+          options: ["🎸 Violões até R$1000", "🌴 Ver Ukuleles", "🔥 Produtos em Promoção"]
+        });
+        return;
+      }
+
+      // Intercept Cart Inquiries
+      const isCartQuery = [
+        "carrinho", "meu carrinho", "ver carrinho", "itens no carrinho", "itens do carrinho",
+        "o que tem no carrinho", "o que tem no meu carrinho", "quais itens estao no carrinho",
+        "quais produtos estao no carrinho", "mostrar carrinho", "exibir carrinho", "abrir carrinho",
+        "ver meu carrinho", "como esta meu carrinho", "produtos no carrinho", "meus produtos"
+      ].some(k => lower === k || lower.startsWith(k + " ") || lower.endsWith(" " + k) || lower === k + "?");
+
+      if (isCartQuery) {
+        appendMsg(text, "user");
+        showCartInChat();
+        return;
+      }
+
+      // Intercept Continuar Comprando
+      if (lower === "continuar comprando" || lower === "ver mais produtos") {
+        appendMsg(text, "user");
+        appendMsg("Fique à vontade! Que tipo de instrumento você gostaria de conferir agora? 🎶", "bot", {
+          active_agent: "catalog",
+          options: ["🎸 Violões até R$1000", "🌴 Ver Ukuleles", "🔥 Produtos em Promoção", "📍 Endereço da Loja"]
+        });
+        return;
+      }
+
+      // Intercept Fechar Pedido when cart has items
+      const cleanLower = lower.replace(/[^a-z0-9\\s]/g, '').trim();
+      if ((cleanLower.includes("fechar pedido") || cleanLower.includes("finalizar compra") || cleanLower.includes("concluir compra") || cleanLower.includes("fechar carrinho") || cleanLower.includes("concluir pedido")) && cart.length > 0) {
+        simulateCartWithAgent();
+        return;
+      }
+
       appendMsg(text, "user");
       try {
         const res = await fetch("/api/chat", {
@@ -916,6 +1530,15 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       }
     }
 
+    function focusUserInput() {
+      const el = document.getElementById("userInput");
+      if (el) el.focus();
+    }
+
+    function sendStoreInfo() {
+      sendQuick("Qual o endereço e horário de funcionamento da loja?");
+    }
+
     async function resetChat() {
       await fetch("/api/session/reset", {
         method: "POST",
@@ -924,7 +1547,212 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       });
       cart = [];
       updateCartUI();
-      messagesEl.innerHTML = '<div class="msg-wrapper"><div class="msg bot"><div class="md-content">Sessão e carrinho reiniciados! Como posso ajudar você hoje na Empório da Música? 🎶</div></div></div>';
+      messagesEl.innerHTML = '<div class="msg-wrapper"><div class="msg bot"><div class="md-content">Olá! Seja muito bem-vindo(a) à <strong>Empório da Música</strong>! 🎸🎶<br/><br/>Sou seu assistente virtual. Para começarmos o seu atendimento e identificarmos seu cadastro, por favor informe o seu <strong>número de telefone/WhatsApp</strong> ou <strong>e-mail</strong>.</div></div></div>';
+      const chipsEl = document.getElementById("chipsContainer");
+      if (chipsEl) {
+        chipsEl.innerHTML = "";
+        chipsEl.style.display = "none";
+      }
+    }
+
+    let activeCustomerTab = "register";
+
+    function openCustomerModal() {
+      document.getElementById("customerModalBackdrop").classList.add("open");
+      hideModalAlert();
+    }
+
+    function closeCustomerModal() {
+      document.getElementById("customerModalBackdrop").classList.remove("open");
+    }
+
+    function switchCustomerTab(tab) {
+      activeCustomerTab = tab;
+      const isReg = tab === "register";
+      document.getElementById("tabBtnRegister").classList.toggle("active", isReg);
+      document.getElementById("tabBtnAddress").classList.toggle("active", !isReg);
+      document.getElementById("tabContentRegister").style.display = isReg ? "block" : "none";
+      document.getElementById("tabContentAddress").style.display = isReg ? "none" : "block";
+      document.getElementById("btnSubmitModal").textContent = isReg ? "Salvar Cadastro" : "Atualizar Endereço";
+      hideModalAlert();
+    }
+
+    function showModalAlert(text, type) {
+      const el = document.getElementById("modalAlert");
+      el.className = `alert-banner ${type}`;
+      el.textContent = text;
+      el.style.display = "block";
+    }
+
+    function hideModalAlert() {
+      const el = document.getElementById("modalAlert");
+      el.style.display = "none";
+      el.textContent = "";
+    }
+
+    let cepTimeout = null;
+    function handleCepInput(target) {
+      clearTimeout(cepTimeout);
+      cepTimeout = setTimeout(() => {
+        triggerCepSearch(target);
+      }, 500);
+    }
+
+    async function triggerCepSearch(target) {
+      const isReg = target === "register";
+      const cepInput = document.getElementById(isReg ? "regCep" : "updCep");
+      const feedbackEl = document.getElementById(isReg ? "regCepFeedback" : "updCepFeedback");
+      const rawCep = (cepInput.value || "").replace(/\\D/g, "");
+      if (rawCep.length !== 8) {
+        if (rawCep.length > 0) feedbackEl.textContent = "Digite os 8 dígitos do CEP.";
+        return;
+      }
+      feedbackEl.textContent = "Buscando CEP no ViaCEP...";
+      feedbackEl.style.color = "#fcd34d";
+      try {
+        const res = await fetch(`/api/cep/${rawCep}`);
+        const data = await res.json();
+        if (data && data.found) {
+          feedbackEl.textContent = `✓ ${data.city} - ${data.state} (${data.neighborhood || "Centro"})`;
+          feedbackEl.style.color = "#6ee7b7";
+          if (isReg) {
+            if (data.street) document.getElementById("regAddress").value = data.street;
+            if (data.neighborhood) document.getElementById("regNeighborhood").value = data.neighborhood;
+            if (data.city) document.getElementById("regCity").value = data.city;
+            if (data.state) document.getElementById("regState").value = data.state;
+          } else {
+            if (data.street) document.getElementById("updAddress").value = data.street;
+            if (data.neighborhood) document.getElementById("updNeighborhood").value = data.neighborhood;
+            if (data.city) document.getElementById("updCity").value = data.city;
+            if (data.state) document.getElementById("updState").value = data.state;
+          }
+        } else {
+          feedbackEl.textContent = "CEP não localizado ou inválido. Preencha manualmente.";
+          feedbackEl.style.color = "#fca5a5";
+        }
+      } catch (e) {
+        feedbackEl.textContent = "Erro na consulta do CEP. Preencha manualmente.";
+        feedbackEl.style.color = "#fca5a5";
+      }
+    }
+
+    async function submitCustomerForm() {
+      hideModalAlert();
+      if (activeCustomerTab === "register") {
+        const name = document.getElementById("regName").value.trim();
+        const phone = document.getElementById("regPhone").value.trim();
+        const email = document.getElementById("regEmail").value.trim();
+        const cep = document.getElementById("regCep").value.trim();
+        const street = document.getElementById("regAddress").value.trim();
+        const number = document.getElementById("regNumber").value.trim();
+        const neighborhood = document.getElementById("regNeighborhood").value.trim();
+        const city = document.getElementById("regCity").value.trim();
+        const state = document.getElementById("regState").value.trim();
+
+        if (!name) {
+          showModalAlert("Informe seu nome completo.", "error");
+          return;
+        }
+        if (!phone && !email) {
+          showModalAlert("Informe pelo menos o WhatsApp/Telefone ou E-mail.", "error");
+          return;
+        }
+
+        let fullAddress = street;
+        if (number) fullAddress += `, ${number}`;
+        if (neighborhood) fullAddress += ` - ${neighborhood}`;
+        if (state) fullAddress += ` - ${state}`;
+
+        try {
+          const res = await fetch("/api/customer/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: name,
+              phone: phone || null,
+              email: email || null,
+              cep: cep || null,
+              address: fullAddress || null,
+              city: city || "Campo Grande",
+            })
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            showModalAlert(`Cadastro realizado com sucesso! ID #${data.customer_id}.`, "success");
+            setTimeout(() => {
+              closeCustomerModal();
+              appendMsg(`Olá! Concluí meu cadastro na loja. Meu nome é ${name} e meu contato é ${phone || email}.`, "user");
+              sendMessageDirect(`Olá! Concluí meu cadastro na loja. Meu nome é ${name} e meu contato é ${phone || email}.`);
+            }, 1200);
+          } else {
+            showModalAlert(data.detail || data.message || "Erro ao realizar cadastro.", "error");
+          }
+        } catch (e) {
+          showModalAlert("Erro ao conectar com o servidor.", "error");
+        }
+      } else {
+        const identifier = document.getElementById("updIdentifier").value.trim();
+        const cep = document.getElementById("updCep").value.trim();
+        const street = document.getElementById("updAddress").value.trim();
+        const number = document.getElementById("updNumber").value.trim();
+        const neighborhood = document.getElementById("updNeighborhood").value.trim();
+        const city = document.getElementById("updCity").value.trim();
+        const state = document.getElementById("updState").value.trim();
+
+        if (!identifier) {
+          showModalAlert("Informe seu telefone ou e-mail cadastrado.", "error");
+          return;
+        }
+        if (!street) {
+          showModalAlert("Informe o novo endereço/rua.", "error");
+          return;
+        }
+
+        let fullAddress = street;
+        if (number) fullAddress += `, ${number}`;
+        if (neighborhood) fullAddress += ` - ${neighborhood}`;
+        if (state) fullAddress += ` - ${state}`;
+
+        try {
+          const res = await fetch("/api/customer/address", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              customer_identifier: identifier,
+              address: fullAddress,
+              cep: cep || null,
+              city: city || "Campo Grande",
+            })
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            showModalAlert("Endereço atualizado com sucesso no cadastro!", "success");
+            setTimeout(() => {
+              closeCustomerModal();
+              appendMsg(`Atualizei meu endereço de entrega para: ${fullAddress}.`, "user");
+              sendMessageDirect(`Atualizei meu endereço de entrega para: ${fullAddress}.`);
+            }, 1200);
+          } else {
+            showModalAlert(data.detail || data.message || "Cadastro não encontrado.", "error");
+          }
+        } catch (e) {
+          showModalAlert("Erro ao conectar com o servidor.", "error");
+        }
+      }
+    }
+
+    async function sendMessageDirect(text) {
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text, session_id: sessionId })
+        });
+        const data = await res.json();
+        appendMsg(data.reply, "bot", data);
+      } catch (e) {
+        appendMsg("Erro ao comunicar com o servidor.", "bot");
+      }
     }
   </script>
 </body>
@@ -987,9 +1815,15 @@ def create_app(db_path: Optional[Path] = None, pdf_path: Optional[Path] = None) 
                 model_used=result["model_used"],
                 tools_called=result.get("tools_called", []),
                 products=result.get("products", []),
+                active_agent=result.get("active_agent", "catalog"),
+                action=result.get("action"),
+                options=result.get("options", []),
+                prefill=result.get("prefill"),
                 logged_failed_intent=result.get("logged_failed_intent", False),
             )
         except Exception as exc:
+            import traceback
+            traceback.print_exc()
             return ChatResponse(
                 session_id=payload.session_id,
                 reply=(
@@ -1001,6 +1835,9 @@ def create_app(db_path: Optional[Path] = None, pdf_path: Optional[Path] = None) 
                 model_used="api_error_recovery",
                 tools_called=[],
                 products=[],
+                active_agent="orchestrator",
+                action=None,
+                options=[],
                 logged_failed_intent=True,
             )
 
@@ -1023,6 +1860,54 @@ def create_app(db_path: Optional[Path] = None, pdf_path: Optional[Path] = None) 
         """List logged low-confidence or ambiguous user interactions for NLU auditing."""
         failures = chat_service.agent.failed_intent_repo.get_all_failures(limit=50)
         return {"count": len(failures), "items": failures}
+
+    @app.get("/api/cep/{cep}", tags=["Customers & Addresses"])
+    def lookup_cep_endpoint(cep: str) -> Dict[str, Any]:
+        """Search Brazilian postal code (CEP) via ViaCEP API with offline cache fallback."""
+        return CepService.lookup_cep(cep)
+
+    @app.post("/api/customer/register", tags=["Customers & Addresses"])
+    def register_customer_endpoint(payload: CustomerRegisterRequest) -> Dict[str, Any]:
+        """Register a new customer and auto-enrich address using CEP lookup."""
+        if not payload.name or not payload.name.strip():
+            raise HTTPException(status_code=400, detail="Customer name cannot be empty.")
+        if not payload.phone and not payload.email:
+            raise HTTPException(status_code=400, detail="Must provide at least phone number or email.")
+        return chat_service.agent.tool_executor.register_customer(
+            name=payload.name,
+            phone=payload.phone,
+            email=payload.email,
+            cep=payload.cep,
+            address=payload.address,
+            city=payload.city,
+        )
+
+    @app.post("/api/customer/address", tags=["Customers & Addresses"])
+    def update_customer_address_endpoint(payload: CustomerAddressRequest) -> Dict[str, Any]:
+        """Update delivery address and optional CEP for an existing customer."""
+        if not payload.customer_identifier or not payload.customer_identifier.strip():
+            raise HTTPException(status_code=400, detail="customer_identifier is required.")
+        if not payload.address or not payload.address.strip():
+            raise HTTPException(status_code=400, detail="Address cannot be empty.")
+        result = chat_service.agent.tool_executor.update_customer_address(
+            customer_identifier=payload.customer_identifier,
+            address=payload.address,
+            cep=payload.cep,
+            city=payload.city,
+        )
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=result.get("message", "Customer not found."))
+        return result
+
+    @app.get("/api/pix-qrcode", tags=["Payments"])
+    def get_pix_qrcode_endpoint(
+        amount: str = "0.00",
+        name: str = "Empório da Música",
+        txid: str = "EMP123456",
+    ) -> Response:
+        """Generate and serve simulated SVG QR Code for PIX payments."""
+        svg_content = PixService.generate_pix_svg(amount=amount, name=name, txid=txid)
+        return Response(content=svg_content, media_type="image/svg+xml")
 
     return app
 

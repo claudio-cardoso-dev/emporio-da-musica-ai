@@ -1,4 +1,4 @@
-"""Repository for logging ambiguous or low-confidence user messages (inspired by XPTO case)."""
+"""Repository for logging ambiguous or low-confidence user messages for auditing and continuous improvement."""
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional

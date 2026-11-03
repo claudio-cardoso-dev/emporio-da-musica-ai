@@ -9,6 +9,7 @@ from src.rag.policy_retriever import PolicyRetriever
 from src.repositories.customer_repository import CustomerRepository
 from src.repositories.order_repository import OrderRepository
 from src.repositories.product_repository import ProductRepository, normalize_text
+from src.services.cep_service import CepService
 from src.services.pricing_service import PricingService
 
 
@@ -189,6 +190,97 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "lookup_cep",
+            "description": (
+                "Search Brazilian postal code (CEP) via official Busca CEP (ViaCEP API) to automatically resolve "
+                "street address (logradouro), neighborhood (bairro), city (localidade), and state (UF)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cep": {
+                        "type": "string",
+                        "description": "8-digit Brazilian postal code (e.g. '79202-333' or '79002000').",
+                    },
+                },
+                "required": ["cep"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "register_customer",
+            "description": (
+                "Register a new customer who is not yet in the system. Use when an unregistered user wants to register, "
+                "place an order, or save their personal/delivery data. If CEP is provided, automatically enriches address via Busca CEP."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Customer full name.",
+                    },
+                    "phone": {
+                        "type": "string",
+                        "description": "Customer phone number or WhatsApp (e.g. '(67) 99999-8888').",
+                    },
+                    "email": {
+                        "type": "string",
+                        "description": "Customer email address (e.g. 'cliente@email.com').",
+                    },
+                    "cep": {
+                        "type": "string",
+                        "description": "Optional 8-digit postal code (CEP). Automatically resolved via Busca CEP.",
+                    },
+                    "address": {
+                        "type": "string",
+                        "description": "Optional street address with number and complement (e.g. 'Rua 14 de Maio, 3200, Apto 101').",
+                    },
+                    "city": {
+                        "type": "string",
+                        "description": "City name (defaults to 'Campo Grande' or resolved from CEP).",
+                    },
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_customer_address",
+            "description": (
+                "Update or register the delivery address and CEP for an existing customer in the database."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "customer_identifier": {
+                        "type": "string",
+                        "description": "Customer's registered phone, email, or customer ID.",
+                    },
+                    "address": {
+                        "type": "string",
+                        "description": "Full updated delivery address (street, number, complement, neighborhood).",
+                    },
+                    "cep": {
+                        "type": "string",
+                        "description": "Optional 8-digit postal code (CEP).",
+                    },
+                    "city": {
+                        "type": "string",
+                        "description": "Optional updated city name.",
+                    },
+                },
+                "required": ["customer_identifier", "address"],
+            },
+        },
+    },
 ]
 
 
@@ -242,6 +334,9 @@ class ToolExecutor:
             "check_order_status": self.check_order_status,
             "simulate_payment_and_shipping": self.simulate_payment_and_shipping,
             "consult_store_policies": self.consult_store_policies,
+            "lookup_cep": self.lookup_cep,
+            "register_customer": self.register_customer,
+            "update_customer_address": self.update_customer_address,
         }
         handler = dispatch.get(tool_name)
         if not handler:
@@ -264,12 +359,27 @@ class ToolExecutor:
         electronics: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute catalog search and attach alternatives if specific items are unavailable."""
+        # When browsing a category or general instrument types, default to in-stock and active items
+        cat_keywords = {
+            "ukulele", "ukuleles", "violao", "violoes", "violão", "violões",
+            "guitarra", "guitarras", "baixo", "baixos", "bateria", "baterias",
+            "teclado", "teclados", "piano", "pianos", "sopro", "cordas", "orquestral",
+        }
+        effective_only_available = only_available
+        if not query and category_query:
+            effective_only_available = True
+        elif query and normalize_text(query).strip() in cat_keywords:
+            effective_only_available = True
+            if not category_query:
+                category_query = query
+            query = None
+
         products = self.product_repo.search_products(
             query=query,
             category_query=category_query,
             max_price=max_price,
             min_price=min_price,
-            only_available=only_available,
+            only_available=effective_only_available,
             only_on_promotion=only_on_promotion,
             strings_type=strings_type,
             electronics=electronics,
@@ -422,11 +532,14 @@ class ToolExecutor:
             return {
                 "found": False,
                 "verification_failed": True,
+                "customer_not_found": True,
+                "suggest_new_customer": True,
+                "options": ["Sim, sou novo cliente", "Não, vou tentar outro dado"],
                 "message": (
-                    "FALHA DE CONFIRMAÇÃO: O telefone ou e-mail informado não corresponde ao nome informado. "
-                    "Por motivos de segurança e privacidade (LGPD), NÃO confirme se o número existe ou de quem é. "
-                    "Apenas informe educadamente que o telefone ou e-mail não corresponde ao nome completo informado, "
-                    "e solicite que o cliente verifique e informe o telefone ou e-mail correto cadastrado."
+                    "DADO NÃO ENCONTRADO: O telefone ou e-mail informado não foi localizado no cadastro da loja. "
+                    "Informe educadamente que não localizou um cadastro com esse contato e PERGUNTE se a pessoa é um novo cliente. "
+                    "Pergunte exatamente: 'Você é um novo cliente por aqui na Empório da Música? 🎶'. "
+                    "Explique que, se for um novo cliente, podemos abrir o formulário de cadastro agora mesmo aqui no chat!"
                 ),
             }
 
@@ -541,5 +654,97 @@ class ToolExecutor:
         return {
             "query": query,
             "matched_sections": sections,
+        }
+
+    def lookup_cep(self, cep: str) -> Dict[str, Any]:
+        """Query Brazilian postal code (CEP) via CepService (ViaCEP API)."""
+        return CepService.lookup_cep(cep)
+
+    def register_customer(
+        self,
+        name: str,
+        phone: Optional[str] = None,
+        email: Optional[str] = None,
+        cep: Optional[str] = None,
+        address: Optional[str] = None,
+        city: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Register a new customer and optionally auto-complete address with CEP."""
+        full_address = (address or "").strip()
+        resolved_city = (city or "").strip()
+
+        # If CEP is provided, resolve and enrich address details
+        cep_details = None
+        if cep and cep.strip():
+            cep_details = CepService.lookup_cep(cep.strip())
+            if cep_details.get("found"):
+                if not resolved_city:
+                    resolved_city = cep_details.get("city", "Campo Grande")
+                if not full_address:
+                    full_address = cep_details.get("formatted_address", "")
+                elif cep_details.get("street") and cep_details.get("street").lower() not in full_address.lower():
+                    full_address = f"{full_address} - {cep_details.get('street')}, {cep_details.get('neighborhood')}, {resolved_city} - {cep_details.get('state')}"
+
+        if not resolved_city:
+            resolved_city = "Campo Grande"
+
+        new_id = self.customer_repo.create_customer(
+            name=name.strip(),
+            phone=phone.strip() if phone else None,
+            email=email.strip() if email else None,
+            city=resolved_city,
+            address=full_address if full_address else None,
+            cep=CepService.clean_cep(cep) if cep else None,
+        )
+
+        return {
+            "success": True,
+            "customer_id": new_id,
+            "name": name.strip(),
+            "phone": phone,
+            "email": email,
+            "city": resolved_city,
+            "address": full_address or None,
+            "cep": CepService.format_cep(CepService.clean_cep(cep)) if cep else None,
+            "cep_lookup": cep_details,
+            "message": f"Cliente {name.strip()} cadastrado com sucesso com ID #{new_id}! O cadastro já está ativo para pedidos e entregas.",
+        }
+
+    def update_customer_address(
+        self,
+        customer_identifier: str,
+        address: str,
+        cep: Optional[str] = None,
+        city: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update address and optional CEP for an existing customer."""
+        clean_cep = CepService.clean_cep(cep) if cep else None
+        resolved_city = city
+
+        if clean_cep:
+            cep_info = CepService.lookup_cep(clean_cep)
+            if cep_info.get("found") and not resolved_city:
+                resolved_city = cep_info.get("city")
+
+        success = self.customer_repo.update_address(
+            identifier=customer_identifier,
+            address=address,
+            cep=clean_cep,
+            city=resolved_city,
+        )
+
+        if not success:
+            return {
+                "success": False,
+                "message": f"Não encontramos cadastro correspondente a '{customer_identifier}' para atualizar o endereço.",
+            }
+
+        return {
+            "success": True,
+            "customer_identifier": customer_identifier,
+            "updated_address": address,
+            "cep": CepService.format_cep(clean_cep) if clean_cep else None,
+            "city": resolved_city,
+            "message": "Endereço atualizado com sucesso no cadastro!",
         }
 

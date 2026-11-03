@@ -3,23 +3,35 @@
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688?logo=fastapi&logoColor=white)
 ![Groq](https://img.shields.io/badge/LLM-Qwen3%20%2B%20Groq%20Fallbacks-F55036)
-![SQLite](https://img.shields.io/badge/Database-SQLite%20%2B%20Hybrid%20RAG-003B57?logo=sqlite&logoColor=white)
-![Pytest](https://img.shields.io/badge/Tests-61%20Passed-10B981?logo=pytest&logoColor=white)
+![Architecture](https://img.shields.io/badge/Architecture-Specialist%20Multi--Agent-6366F1)
+![Database](https://img.shields.io/badge/Database-SQLite%20%2B%20Hybrid%20RAG-003B57?logo=sqlite&logoColor=white)
+![APIs](https://img.shields.io/badge/Integrations-ViaCEP%20%2B%20PIX%20SVG-059669)
+![Pytest](https://img.shields.io/badge/Tests-93%20Passed-10B981?logo=pytest&logoColor=white)
 
-> **Desafio Técnico — AI Engineer (Artefact)**  
-> Assistente conversacional inteligente desenvolvido para a **Empório da Música** (*"Sua música começa aqui"* — Campo Grande/MS), projetado com **Clean Architecture, SOLID, Function Calling, RAG Semântico Híbrido e Motor Determinístico de Regras Financeiras**.
+> **Assistente Conversacional de E-commerce com IA & Arquitetura Multiagente Especializada**  
+> Desenvolvido para a **Empório da Música** (*"Sua música começa aqui"* — Campo Grande/MS), fundamentado em **Clean Architecture, SOLID, Function Calling Nativo, RAG Semântico Híbrido, Motor Financeiro Determinístico e Interface Conversacional Glassmorphism**.
 
 ---
 
 ## 📋 Sumário Executivo
 
-A **Empório da Música** é uma loja tradicional de instrumentos musicais localizada em Campo Grande/MS que enfrentava sobrecarga na equipe de atendimento devido ao alto volume de dúvidas recorrentes sobre **catálogo, estoque, preços, promoções, cálculo de parcelamento/PIX, status de pedidos e políticas internas de troca, frete e garantia**.
+A **Empório da Música** é uma loja tradicional de instrumentos musicais fundada em 2008 em Campo Grande/MS que buscava otimizar e escalar seu atendimento ao cliente sem perder a proximidade, o conhecimento musical e a segurança de dados.
 
-Este projeto entrega uma solução pronta para produção que resolve o problema através de uma **Arquitetura Agêntica Híbrida**:
-1. **Zero Alucinação Numérica:** Consultas estruturadas em banco relacional **SQLite** (alimentado por pipeline ETL dos 6 arquivos `.csv`) combinadas com um serviço determinístico (`PricingService`) que calcula descontos de PIX, regras de parcela mínima (3x, 6x, 12x) e frete regional.
-2. **RAG Semântico Híbrido para Políticas (`políticas_da_loja.pdf`):** Extração normalizada do PDF, *chunking* hierárquico pelas 10 seções do manual e motor de busca combinando **BM25 + Expansão de Conceitos Multilíngues + Similaridade Fuzzy (`rapidfuzz`)**.
-3. **Resiliência de LLM (Multi-Model Fallback):** Utiliza a API de ultra-baixa latência da **Groq** com o modelo **Qwen (`qwen/qwen3.8-27b`) como primário**, seguido de *fallbacks* automáticos (`openai/gpt-oss-120b` $\rightarrow$ `openai/gpt-oss-20b`) contra *rate limits* ou indisponibilidades.
-4. **Persona Multilíngue Adaptativa & Guardrails de Desambiguação:** O agente identifica automaticamente o idioma do cliente (**Português, Inglês ou Espanhol**) e responde no mesmo idioma, mantendo o tom acolhedor de um amigo músico. Entradas de baixa confiança ou ambíguas são interceptadas em baixa temperatura, apresentam opções claras de desambiguação e são registradas na tabela de observabilidade `failed_intents` (`FailedIntentRepository`).
+Este projeto entrega uma solução pronta para produção que soluciona o desafio de ponta a ponta através de uma **Arquitetura Multiagente Especializada e Híbrida**:
+
+1. **Arquitetura Multiagente Especialista (`IntentRouter`):** Roteamento determinístico e dinâmico que encaminha cada turno do cliente para agentes dedicados com escopo restrito de ferramentas e prompts especializados:
+   - **`CustomerAgent`:** Onboarding seguro (LGPD), identificação unívoca por telefone/e-mail, termos de aceite e integração com **ViaCEP** para preenchimento e validação automática de endereço.
+   - **`CatalogAgent`:** Busca e recomendação de instrumentos musicais com zero alucinação, filtros de estoque/preço e renderização de cards interativos 3D.
+   - **`CheckoutAgent`:** Fechamento de carrinho, cálculo determinístico de parcelas e descontos de 5% no PIX, verificação de frete (motoboy em Campo Grande ou transportadora regional) e simulação de QR Code PIX dinâmico (SVG).
+   - **`SupportAgent`:** Políticas de troca/devolução (CDC), consulta de status e rastreamento de pedidos com validação estrita de titularidade e dúvidas institucionais.
+2. **Zero Alucinação Numérica e Regras de Negócio:** Consultas estruturadas em banco relacional **SQLite** (alimentado por pipeline ETL idempotente dos CSVs operacionais) acopladas ao `PricingService` para garantir conformidade matemática estrita (bloqueio de desconto duplo de PIX em promoções ativas, limites de parcelamento e regras de frete).
+3. **RAG Semântico Híbrido para Políticas da Loja (`políticas_da_loja.pdf`):** Extração hierárquica do PDF de políticas da loja, normalização de layouts e motor de busca combinando **BM25 + Expansão de Conceitos Multilíngues (PT/EN/ES) + Similaridade Fuzzy (`rapidfuzz`)**.
+4. **Resiliência de LLM (Multi-Model Fallback Chain):** Inferência de ultra-baixa latência via **Groq API** com **Qwen (`qwen/qwen3.8-27b`) como primário**, garantindo raciocínio ágil em português brasileiro, com *fallback* automático em cascata (`openai/gpt-oss-120b` $\rightarrow$ `openai/gpt-oss-20b`) contra oscilações de conexão ou *rate limits*.
+5. **Experiência Conversacional de Alto Padrão (Glassmorphism Web UI):**
+   - Cards 3D interativos com rotação frente/verso (*flip card*) exibindo especificações de madeira, tampo e acabamento.
+   - Seletores de quantidade (`-` / `+`) e adição direta ao carrinho no chat.
+   - Formulários modais e inline integrados com consulta instantânea de CEP.
+   - Comunicação humanizada: sem jargões técnicos de frontend (substituindo termos como "carrossel" por *"confira abaixo a lista de opções disponíveis..."*).
 
 ---
 
@@ -27,112 +39,121 @@ Este projeto entrega uma solução pronta para produção que resolve o problema
 
 ```mermaid
 flowchart TD
-    User(["👤 Cliente (Rich CLI / FastAPI Swagger / Web Chat UI)"]) --> Entry["main.py / FastAPI App"]
-    Entry --> ChatService["ChatService (Gestão de Sessão & Histórico SQLite)"]
-    ChatService --> Guardrail["Clarity & Confidence Evaluator (Low-Temp Guardrail)"]
+    User(["👤 Cliente (Web Chat UI / Swagger API / CLI)"]) --> App["FastAPI Server / main.py"]
+    App --> ChatService["ChatService (Gestão de Sessão & Histórico SQLite)"]
+    ChatService --> Router["IntentRouter (Classificador de Estágios e Intenções)"]
     
-    Guardrail -- "Confiança < 0.65 / Ruído" --> FailedRepo[("SQLite: failed_intents")]
-    Guardrail -- "Intenção Clara" --> Agent["AssistantAgent (Qwen3 Primary -> Fallbacks)"]
+    Router --> |Onboarding / LGPD / CEP| Customer["CustomerAgent"]
+    Router --> |Catálogo / Recomendações| Catalog["CatalogAgent"]
+    Router --> |Carrinho / Checkout / PIX| Checkout["CheckoutAgent"]
+    Router --> |Políticas / Rastreio / SAC| Support["SupportAgent"]
     
-    Agent --> ToolSearch["Tool: search_instruments"]
-    Agent --> ToolDetails["Tool: get_instrument_details_and_pricing"]
-    Agent --> ToolOrder["Tool: check_order_status"]
-    Agent --> ToolSim["Tool: simulate_payment_and_shipping"]
-    Agent --> ToolPolicy["Tool: consult_store_policies"]
+    Customer --> ToolCEP["CepService (ViaCEP API + Cache)"]
+    Customer --> RepoCustomer["CustomerRepository"]
     
-    ToolSearch & ToolDetails & ToolOrder --> Repos["Repositories (Product, Customer, Order)"]
-    ToolDetails & ToolSim --> Pricing["PricingService (PIX, Parcelas & Frete)"]
-    Repos --> SQLite[("SQLite Operational DB (6 CSVs)")]
-    ToolPolicy --> PolicyRAG["PolicyRetriever (BM25 + Concept Boost + Fuzzy)"]
+    Catalog --> ToolSearch["search_instruments"]
+    Catalog --> ToolDetails["get_instrument_details_and_pricing"]
+    ToolSearch & ToolDetails --> RepoProduct["ProductRepository"]
+    
+    Checkout --> ToolSim["simulate_payment_and_shipping"]
+    Checkout --> PixService["PixService (Geração de QR Code SVG)"]
+    ToolSim --> Pricing["PricingService (Regras Determinísticas)"]
+    
+    Support --> ToolOrder["check_order_status (Validação Estrita de Chave)"]
+    Support --> ToolPolicy["consult_store_policies"]
+    ToolOrder --> RepoOrder["OrderRepository"]
+    ToolPolicy --> PolicyRAG["PolicyRetriever (BM25 + Fuzzy + Expansão Conceitual)"]
+    
+    RepoProduct & RepoCustomer & RepoOrder --> SQLite[("SQLite Database")]
     PolicyRAG --> PDF[("data/políticas_da_loja.pdf")]
+    
+    Router -- "Confiança Baixa / Ruído" --> FailedRepo[("failed_intents (Auditoria de Observabilidade)")]
 ```
 
-### Estrutura de Diretórios (Clean Architecture & SRP)
+---
+
+### 📂 Estrutura de Diretórios (Clean Architecture & Modularidade)
 
 ```text
 📦 emporio-da-musica-ai
- ┣ 📂 data/                          # Materiais originais da operação (6 CSVs + PDF de Políticas)
+ ┣ 📂 data/                          # Dados operacionais (6 CSVs + PDF de Políticas)
  ┣ 📂 docs/
- ┃ ┣ 📂 examples/                    # 5 Transcrições reais multi-turno (.md) cobrindo cenários e edge cases
- ┃ ┗ 📜 generate_examples.py         # Script reprodutível para geração das conversas
+ ┃ ┣ 📂 examples/                    # 5 Transcrições reais multi-turno (.md)
+ ┃ ┗ 📜 generate_examples.py         # Script de geração dos cenários de teste
  ┣ 📂 src/
- ┃ ┣ 📂 agents/                      # Orquestração LLM, System Prompts, Tools e Guardrails
- ┃ ┃ ┣ 📜 assistant_agent.py         # Loop de Function Calling, Fallbacks e filtro de tags <think>
- ┃ ┃ ┣ 📜 prompts.py                 # Persona multilíngue, regras de negócio e templates de baixa confiança
- ┃ ┃ ┗ 📜 tools.py                   # 5 ferramentas JSON Schema e executor desacoplado
- ┃ ┣ 📂 api/                         # Interfaces de Interação com o Usuário
- ┃ ┃ ┣ 📜 app.py                     # Servidor FastAPI + Swagger (/docs) + Web Chat UI (Glassmorphism)
- ┃ ┃ ┗ 📜 cli.py                     # Interface de terminal interativa com Rich
+ ┃ ┣ 📂 agents/                      # Orquestração e Agentes Especialistas
+ ┃ ┃ ┣ 📜 assistant_agent.py         # Orquestrador central e gerenciador de estado da sessão
+ ┃ ┃ ┣ 📜 router.py                  # IntentRouter para classificação e transição de estágios
+ ┃ ┃ ┣ 📜 specialists.py             # Agentes dedicados: Catalog, Checkout, Customer e Support
+ ┃ ┃ ┣ 📜 prompts.py                 # Persona humanizada, diretrizes de segurança e regras de negócio
+ ┃ ┃ ┗ 📜 tools.py                   # Definição e schemas tipados das ferramentas de Function Calling
+ ┃ ┣ 📂 api/                         # Camada de Apresentação
+ ┃ ┃ ┣ 📜 app.py                     # API FastAPI + Swagger (/docs) + Web Chat UI Glassmorphism
+ ┃ ┃ ┗ 📜 cli.py                     # Terminal interativo com biblioteca Rich
  ┃ ┣ 📂 config/
- ┃ ┃ ┗ 📜 settings.py                # Configurações tipadas com Pydantic Settings (.env)
+ ┃ ┃ ┗ 📜 settings.py                # Configurações tipadas via Pydantic Settings (.env)
  ┃ ┣ 📂 db/
- ┃ ┃ ┣ 📜 database.py                # Conexão SQLite, gerenciamento de transações e DDL
- ┃ ┃ ┗ 📜 ingestion.py               # Pipeline ETL idempotente dos CSVs com validação de JSON specs
+ ┃ ┃ ┣ 📜 database.py                # Conexão SQLite, DDL de tabelas e context managers
+ ┃ ┃ ┗ 📜 ingestion.py               # Pipeline ETL idempotente com validação de dados
  ┃ ┣ 📂 rag/
- ┃ ┃ ┗ 📜 policy_retriever.py        # Parser de PDF, Chunking por seções e motor de busca híbrido
- ┃ ┣ 📂 repositories/                # Camada de Acesso a Dados (Single Responsibility Principle)
- ┃ ┃ ┣ 📜 customer_repository.py     # Busca de clientes por ID, e-mail, telefone ou nome (com detecção de homônimos)
- ┃ ┃ ┣ 📜 failed_intent_repository.py# Auditoria de interações ambíguas/baixa confiança para melhoria contínua
- ┃ ┃ ┣ 📜 order_repository.py        # Consulta de pedidos, itens e rastreamento
- ┃ ┃ ┗ 📜 product_repository.py      # Busca de catálogo com join de promoções ativas/expiradas e sugestões de estoque
+ ┃ ┃ ┗ 📜 policy_retriever.py        # Parser hierárquico do PDF e motor de busca BM25 + Fuzzy
+ ┃ ┣ 📂 repositories/                # Camada de Acesso a Dados (Pattern Repository)
+ ┃ ┃ ┣ 📜 customer_repository.py     # Gestão segura de clientes, homônimos e atualização de endereço
+ ┃ ┃ ┣ 📜 failed_intent_repository.py# Observabilidade e auditoria de intenções ambíguas
+ ┃ ┃ ┣ 📜 order_repository.py        # Consulta de pedidos, itens e histórico de entrega
+ ┃ ┃ ┗ 📜 product_repository.py      # Catálogo de instrumentos com join de promoções ativas/expiradas
  ┃ ┗ 📂 services/
- ┃   ┣ 📜 chat_service.py            # Persistência de memória conversacional por sessão
- ┃   ┗ 📜 pricing_service.py         # Cálculos determinísticos de PIX (5%), parcelamento (até 12x) e frete
- ┣ 📂 tests/                         # Suíte automatizada com 61 testes (Unitários, RAG, API e E2E)
- ┣ 📜 .env.example                   # Template de variáveis de ambiente
+ ┃   ┣ 📜 cep_service.py             # Integração resiliente com ViaCEP e cache offline de CEPs
+ ┃   ┣ 📜 chat_service.py            # Persistência de sessões e histórico de mensagens
+ ┃   ┣ 📜 pix_service.py             # Geração de payload PIX Copia-e-Cola e QR Code dinâmico em SVG
+ ┃   ┗ 📜 pricing_service.py         # Cálculos de desconto PIX (5%), parcelas e frete por localidade
+ ┣ 📂 tests/                         # Suíte automatizada com 93 testes (Unitários, RAG, API e E2E)
+ ┣ 📜 .env.example                   # Modelo de configuração de ambiente
  ┣ 📜 main.py                        # Ponto de entrada unificado (--mode cli ou --mode api)
- ┣ 📜 pyproject.toml                 # Configuração do projeto e Pytest
+ ┣ 📜 pyproject.toml                 # Configuração de build e testes
  ┗ 📜 requirements.txt               # Dependências enxutas e auditadas
 ```
 
 ---
 
-## 🧠 Justificativa das Decisões Técnicas
+## 🎯 Diferenciais Técnicos e Regras de Negócio Implementadas
 
-### 1. Framework & Abordagem do Agente: **Híbrido (Tool Calling + SQL Repository + Deterministic Rules + Semantic RAG)**
-* **Por que não usar apenas RAG puro sobre os CSVs?** Converter tabelas de produtos, preços e pedidos em *embeddings* textuais frequentemente causa alucinações em filtros numéricos (ex.: *"violões até R\$ 1.000"*), cálculos de desconto e verificação de estoque. Ao ingerir os CSVs no **SQLite** e expor ferramentas estruturadas (`search_instruments`, `get_instrument_details_and_pricing`, `check_order_status`), garantimos **100% de precisão factual**.
-* **Por que não usar um Agente Text-to-SQL livre?** Permitir que o LLM gere queries SQL arbitrárias introduz riscos de segurança, erros de sintaxe e vulnerabilidade a esquemas implícitos (como esquecer de filtrar `is_active = 1` em promoções ou `stock_quantity > 0` em produtos). Nossa camada de Repositórios encapsula as regras de negócio de forma determinística.
-* **Por que RAG Semântico por Seções para o PDF?** O manual `políticas_da_loja.pdf` possui 8 páginas divididas em 10 seções altamente coesas. Durante a análise do PDF, identificamos que a extração bruta gerava quebras de linha a cada palavra (`word-per-line layout`). Construímos um normalizador de texto no `PolicyRetriever` que reconstrói os parágrafos perfeitamente e indexa as 10 seções completas usando **BM25 + Expansão de Conceitos Multilíngues (PT/EN/ES) + Fuzzy Matching**, garantindo que toda a regra contextual seja entregue ao LLM sem perda de cláusulas de exceção.
+### 1. Segurança Cadastral e Conformidade com a LGPD
+- **Autenticação por Chave Primária:** Acesso a pedidos e dados cadastrais exige confirmação estrita de telefone ou e-mail registrado.
+- **Tratamento de Homônimos:** Em clientes com nomes idênticos (ex.: "Bruno"), o sistema nunca expõe dados privados de terceiros e mascara e-mails (`bru***@jmail.com`).
+- **Termo de Consentimento:** Fluxo de novos clientes apresenta termo explícito de aceite antes da coleta de dados.
 
-### 2. Modelo e Provedor: **Groq API (`qwen/qwen3.8-27b` Primário + Fallbacks)**
-* Escolhemos a **Groq API** pela velocidade de inferência em tempo real (essencial para a diretriz de resposta rápida via WhatsApp descrita na Seção 7.1 do manual) e excelente suporte a *Tool Calling* nativo.
-* O modelo **`qwen/qwen3.8-27b`** foi definido como **LLM Primário** por sua capacidade superior de raciocínio lógico em regras comerciais complexas e fluência multilíngue. Implementamos um higienizador automático (`clean_thinking_tags`) para remover blocos internos `<think>...</think>` antes de exibir a resposta ao cliente.
-* Para alta disponibilidade em produção, implementamos *fallback* automático em cascata para `openai/gpt-oss-120b` e `openai/gpt-oss-20b`.
+### 2. Integração ViaCEP com Autocompletação de Endereço
+- O serviço [`CepService`](src/services/cep_service.py) consulta a API dos Correios/ViaCEP em tempo real, resolvendo logradouro, bairro, cidade e UF automaticamente.
+- Inclui *fallback* local pré-carregado para municípios do Mato Grosso do Sul (ex.: Campo Grande, Dourados, Três Lagoas), garantindo disponibilidade mesmo em caso de lentidão externa.
 
-### 3. Tratamento de Dados & "Pegadinhas" de Negócio Resolvidas
-Durante a exploração dos dados em `data/*.csv` e `data/políticas_da_loja.pdf`, mapeamos e tratamos os seguintes cenários críticos:
-1. **Promoções Vencidas vs. Ativas (`promotions.csv`):** Das 25 promoções cadastradas, **21 estão expiradas (`is_active = 0`)** e apenas **4 estão ativas (`is_active = 1`)** — produtos IDs `90` (18% off), `94` (8% off), `121` (20% off) e `127` (10% off). Por exemplo, o **Takamine GD20 (ID 95)** possui uma promoção de 12% com `is_active = 0`. O agente informa com total transparência que a promoção expirou, apresenta o preço atual (R\$ 2.199,00) e oferece os 5% de desconto no PIX (R\$ 2.089,05).
-2. **Não-Cumulatividade do PIX (Seção 6.2):** O desconto de 5% no PIX **não acumula** com promoções ativas. No caso do *Crafter HT-100 Folk (ID 90)*, que possui 18% de desconto ativo (de R\$ 2.399,00 por R\$ 1.967,18), o `PricingService` bloqueia automaticamente os 5% adicionais do PIX e explica a regra ao cliente.
-3. **Produtos Sem Estoque, Descontinuados ou Em Breve (`products.csv`):**
-   - `Giannini GF-3D Dreadnought (ID 96)`: está com `status = active`, mas `stock_quantity = 0`.
-   - `Shelby SN-7C 7 Cordas (ID 113)` e `Ibanez Bass 2X (ID 136)`: estão com `status = discontinued`.
-   - `Kala KA-ABP-CTG Barítono Cedar (ID 130)`: está com `status = coming_soon`.
-   - Em todos esses casos, o repositório aciona automaticamente `get_alternatives_for_unavailable()`, sugerindo 3 instrumentos equivalentes da mesma categoria que possuem estoque imediato.
-4. **Desambiguação de Clientes Homônimos (`customers.csv`):** Existem 3 clientes chamados "Bruno" (*Bruno Carvalho Martins*, *Bruno Carvalho* e *Bruno Martins*), além de homônimos para *Camila*, *Thiago*, *Diego*, etc. Quando o cliente informa apenas o primeiro nome para rastrear um pedido, a ferramenta detecta a ambiguidade, mascara os e-mails (`bru***@jmail.com` — em conformidade com a LGPD, Seção 9) e solicita confirmação antes de expor dados do pedido.
-5. **Escopo Exclusivo & Itens Não Elegíveis para Troca:** A loja vende **apenas instrumentos musicais** (recusando educadamente acessórios como cordas avulsas, palhetas, cabos, cases, pedais e amplificadores) e veda a troca por preferência/arrependimento de **boquilhas de sopro** (higiene), itens personalizados sob encomenda e liquidações "venda final".
+### 3. Simulação Visual de Pagamento PIX e Status Pró-ativo
+- O serviço [`PixService`](src/services/pix_service.py) gera payloads padronizados no padrão EMVCo e renderiza o QR Code diretamente em SVG no corpo da mensagem.
+- Ao concluir o pedido, o assistente notifica o cliente de que a equipe da loja entrará em contato via WhatsApp para passar o status do envio assim que o pagamento for compensado bancariamente.
 
-### 4. Persistência do Histórico e Observabilidade (`FailedIntentRepository`)
-* **Memória de Conversa (`chat_history`):** Implementada em SQLite por `session_id`, permitindo conversas naturais multi-turno (ex.: o cliente consulta opções de violões no Turno 1 e pergunta *"qual a diferença entre o primeiro e o segundo e em quantas vezes posso parcelar?"* no Turno 2).
-* **Auditoria de Baixa Confiança (`failed_intents`):** Sempre que uma mensagem não possui intenção clara, é ambígua ou apresenta score de confiança abaixo do limiar (`CONFIDENCE_THRESHOLD=0.65`), o sistema opera em baixa temperatura, orienta o usuário com opções claras de desambiguação e grava o evento na tabela `failed_intents` para curadoria e melhoria contínua do NLU.
+### 4. Transparência de Preços e Promoções Expiradas
+- O catálogo avalia rigorosamente a vigência de promoções (`is_active = 1`). Caso uma promoção esteja expirada (como no caso do *Takamine GD20*), o assistente informa com total clareza que o desconto anterior expirou, informa o preço de tabela e oferece a opção de 5% de desconto à vista via PIX.
+- Aplicação determinística da regra de não-cumulatividade: itens com promoção já ativa não recebem o desconto extra de PIX.
 
 ---
 
-## 🚀 Como Executar o Projeto Localmente
+## 🚀 Como Executar Localmente
 
 ### Pré-requisitos
 * **Python 3.11+** instalado.
-* Chave de API da **Groq** (`GROQ_API_KEY`) — gratuita em [console.groq.com](https://console.groq.com).
+* Chave de API da **Groq** (`GROQ_API_KEY`) — obtenha gratuitamente em [console.groq.com](https://console.groq.com).
 
 ### 1. Clonar o repositório e instalar dependências
 ```bash
 git clone <URL_DO_REPOSITORIO>
 cd emporio-da-musica-ai
 
-# (Opcional) Criar e ativar ambiente virtual
+# Criar e ativar ambiente virtual (recomendado)
 python -m venv .venv
-# Windows (PowerShell):
+
+# No Windows (PowerShell):
 .\.venv\Scripts\Activate.ps1
-# Linux / macOS:
+# No Linux/macOS:
 source .venv/bin/activate
 
 # Instalar dependências
@@ -140,13 +161,12 @@ pip install -r requirements.txt
 ```
 
 ### 2. Configurar variáveis de ambiente (`.env`)
-Copie o arquivo `.env.example` para `.env` e insira sua chave `GROQ_API_KEY`:
 ```bash
 cp .env.example .env
 ```
-Conteúdo do `.env`:
+Edite o `.env` informando sua chave:
 ```env
-GROQ_API_KEY=sua_chave_groq_aqui
+GROQ_API_KEY=gsk_sua_chave_groq_aqui
 PRIMARY_MODEL=qwen/qwen3.8-27b
 FALLBACK_MODEL_1=openai/gpt-oss-120b
 FALLBACK_MODEL_2=openai/gpt-oss-20b
@@ -157,64 +177,62 @@ DATA_DIR=data
 CONFIDENCE_THRESHOLD=0.65
 ```
 
-### 3. Executar o Agente (Modo CLI Interativo ou Modo API + Web Chat UI)
+### 3. Executar a Aplicação
 
-#### Opção A: Interface de Terminal Interativa (Rich CLI)
-```bash
-python main.py --mode cli
-```
-* Comandos disponíveis dentro do chat CLI:
-  * `/reset` — Limpa o histórico da sessão atual.
-  * `/history` — Exibe a tabela de mensagens da sessão.
-  * `/failed` — Exibe os logs de intenções ambíguas/baixa confiança (`FailedIntentRepository`).
-  * `/exit` — Encerra o programa.
-
-#### Opção B: Servidor FastAPI + Interface Web Glassmorphism + Swagger UI
+#### Modo API com Interface Web Glassmorphism (Recomendado)
 ```bash
 python main.py --mode api --port 8000
 ```
-* **Interface Web de Chat (Estilo WhatsApp Dark/Glassmorphism):** Acesse `http://127.0.0.1:8000/` no navegador.
-* **Documentação Interativa OpenAPI / Swagger:** Acesse `http://127.0.0.1:8000/docs`.
+- **Web Chat UI:** Abra [`http://localhost:8000`](http://localhost:8000) no seu navegador para utilizar o chat completo com cards 3D interativos e carrinho integrado.
+- **Documentação Interativa Swagger:** Acesse [`http://localhost:8000/docs`](http://localhost:8000/docs).
 
-### 4. Executar a Suíte de Testes Automatizados (61 Testes)
-O projeto conta com **61 testes automatizados** cobrindo ingestão de banco de dados, regras financeiras e de frete, **mais de 3 testes para cada uma das 10 seções do PDF de políticas (32 testes só de RAG)**, tools do agente, endpoints FastAPI e validação E2E das transcrições:
+#### Modo Terminal (Rich CLI)
+```bash
+python main.py --mode cli
+```
+- Comandos interativos no terminal:
+  - `/reset` — Reinicia a sessão da conversa.
+  - `/history` — Exibe o histórico de mensagens formatado.
+  - `/failed` — Consulta registros de baixa confiança para auditoria.
+  - `/exit` — Encerra a execução.
+
+---
+
+## 🧪 Suíte de Testes Automatizados (93 Testes)
+
+A suíte de testes do projeto garante 100% de confiabilidade em todas as camadas da aplicação:
+- Ingestão de banco de dados e integridade referencial dos CSVs.
+- Regras financeiras e de cálculo de frete (`PricingService`).
+- Cobertura exaustiva das 10 seções do PDF de políticas da loja (RAG Semântico).
+- Roteamento multiagente e transições de estado (`IntentRouter`).
+- Sanitização de terminologia e proibição da palavra carrossel (`clean_carousel_mentions`).
+- Endpoints FastAPI, consultas ViaCEP e geração de QR Code PIX.
+- Testes E2E de jornada completa do cliente.
+
+Para executar todos os testes:
 ```bash
 pytest -v
 ```
 
 ---
 
-## 💬 Exemplos de Interação com o Agente (`docs/examples/`)
+## 💬 Transcrições de Exemplo (`docs/examples/`)
 
-Na pasta [`docs/examples/`](docs/examples/) estão disponíveis **5 conversas completas multi-turno** geradas diretamente pelo agente, cobrindo todos os cenários sugeridos pela Artefact e casos de borda adicionais:
+O repositório inclui 5 transcrições de conversas multi-turno cobrindo os cenários principais e casos de borda:
 
-1. 📄 **[`01_catalogo_violoes_ate_1000_e_frete.md`](docs/examples/01_catalogo_violoes_ate_1000_e_frete.md)**  
-   *Consulta de violões disponíveis até R\$ 1.000,00 (filtrando apenas itens em estoque), comparativo técnico Nylon vs. Aço, simulação de parcelamento respeitando parcela mínima, endereço/horário de funcionamento e regra de frete grátis em Campo Grande.*
-2. 📄 **[`02_precos_promocoes_expiradas_e_estoque.md`](docs/examples/02_precos_promocoes_expiradas_e_estoque.md)**  
-   *Consulta do **Takamine GD20** (transparência sobre promoção de 12% expirada + oferta de 5% no PIX), verificação da promoção ativa de 18% do **Crafter HT-100 Folk** (explicando a não-cumulatividade com o PIX) e tratamento de produtos sem estoque (**Giannini GF-3D**), descontinuados (**Shelby SN-7C 7 Cordas**) e em pré-lançamento (**Kala Barítono Cedar**) com recomendação de alternativas.*
-3. 📄 **[`03_politicas_troca_arrependimento_e_garantia.md`](docs/examples/03_politicas_troca_arrependimento_e_garantia.md)**  
-   *Aplicação das políticas de Direito de Arrependimento (7 dias, frete pago pela loja, reembolso em 10 dias úteis), negativa fundamentada de troca de **boquilha de saxofone** (higiene) e **violão customizado sob encomenda**, e distinção entre defeito de fabricação após 45 dias (garantia legal de 90 dias + fabricante) vs. desgaste natural de trastes.*
-4. 📄 **[`04_rastreamento_pedidos_e_desambiguacao_clientes.md`](docs/examples/04_rastreamento_pedidos_e_desambiguacao_clientes.md)**  
-   *Desambiguação segura de clientes homônimos ("Bruno") com mascaramento de e-mail (LGPD), consulta do Pedido #10 (confirmado), Pedido #8 (enviado com código `BRJL5544332BR`) e Pedido #19 (cancelado por falta de pagamento do boleto).*
-5. 📄 **[`05_escopo_acessorios_multilingue_e_baixa_confianca.md`](docs/examples/05_escopo_acessorios_multilingue_e_baixa_confianca.md)**  
-   *Interceptação de mensagem ininteligível com menu de desambiguação e log em `failed_intents`, recusa cordial de venda de acessórios (cordas, palhetas, cabos, amplificadores) e receita culinária, seguida de atendimento fluido em **Inglês** (Fender Stratocaster, pagamento combinado PIX + Cartão e envio para Dourados) e **Espanhol** (política LGPD e exclusão de dados).*
+1. 📄 **[`01_catalogo_violoes_ate_1000_e_frete.md`](docs/examples/01_catalogo_violoes_ate_1000_e_frete.md)** — Filtro por preço, comparativo técnico Nylon x Aço, simulação de parcelas e política de frete grátis em Campo Grande.
+2. 📄 **[`02_precos_promocoes_expiradas_e_estoque.md`](docs/examples/02_precos_promocoes_expiradas_e_estoque.md)** — Transparência em promoções vencidas (Takamine GD20), não-cumulatividade do PIX e recomendação de alternativas para itens sem estoque.
+3. 📄 **[`03_politicas_troca_arrependimento_e_garantia.md`](docs/examples/03_politicas_troca_arrependimento_e_garantia.md)** — Direito de arrependimento (7 dias), recusa justificada de troca para itens de higiene (boquilhas) e distinção entre desgaste natural e garantia legal.
+4. 📄 **[`04_rastreamento_pedidos_e_desambiguacao_clientes.md`](docs/examples/04_rastreamento_pedidos_e_desambiguacao_clientes.md)** — Desambiguação segura de clientes homônimos, mascaramento LGPD e consulta de status de envio com código de rastreamento.
+5. 📄 **[`05_escopo_acessorios_multilingue_e_baixa_confianca.md`](docs/examples/05_escopo_acessorios_multilingue_e_baixa_confianca.md)** — Interceptação de ruído com log em `failed_intents`, recusa de venda de acessórios e atendimento nativo em inglês e espanhol.
 
 ---
 
-## ⚠️ Limitações Conhecidas & Evolução Futura (Com Mais Tempo)
+## 🛠️ Tecnologias e Bibliotecas Utilizadas
 
-1. **Autenticação Real de Clientes (OTP / WhatsApp ID):** Atualmente, a consulta de pedidos aceita o identificador informado na conversa (com desambiguação e mascaramento parcial de e-mail quando há homônimos). Em produção, integraríamos validação via token OTP ou vínculo automático com o número de telefone autenticado pela **WhatsApp Cloud API / Blip**.
-2. **Cotação de Frete em Tempo Real via API dos Correios / Jadlog:** Para cidades fora da Região Metropolitana de Campo Grande, o sistema informa os prazos oficiais do manual (PAC, SEDEX e Jadlog) e alerta sobre cotação individual para instrumentos de grande porte. O próximo passo seria integrar a API de cálculo de frete por CEP e cubagem.
-3. **Embeddings Densos + Reranking Cross-Encoder:** Para este volume documental (manual de 8 páginas e 65 produtos), a combinação de SQLite + BM25 + Expansão de Conceitos + RapidFuzz entrega latência sub-milissegundo e 100% de recall nos 32 testes de políticas. Caso a base documental crescesse para centenas de manuais técnicos de fabricantes, adicionaríamos embeddings densos (`pgvector` / `ChromaDB`) com *Reranking* contextual (ex.: Cohere Rerank).
-4. **Fluxo Transacional de Checkout e Handoff Humano:** Adicionar geração de link de pagamento PIX/Cartão e transferência automática de fila (Human Handoff) para reclamações registradas na Seção 7.3 (SLA de 24h úteis).
-
----
-
-## 🤖 Uso de Assistentes de Código (Workflow de Engenharia com IA)
-
-Em conformidade com as orientações do desafio, declaramos o uso do assistente de engenharia de código **Google Antigravity** durante o desenvolvimento deste projeto, seguindo um workflow estrito orientado a **Arquitetura Limpa e Desenvolvimento Guiado por Testes (TDD)**:
-
-1. **Análise Exploratória e Diagnóstico de Dados:** Utilizamos o assistente para inspecionar rapidamente as relações entre as 6 tabelas CSV e o PDF de políticas, identificando de antemão inconsistências propositais do dataset (como promoções com `is_active=0`, produtos ativos com `stock_quantity=0` e clientes homônimos).
-2. **Reaproveitamento de Padrões Arquiteturais (XPTO Case $\rightarrow$ Python):** Adaptamos padrões validados de projetos anteriores (como separação em `Repositories`, `FailedIntentRepository` para observabilidade de NLU e `Fallback Chains` de LLMs) para uma arquitetura idiomática em Python 3.11+ com tipagem estrita (`Pydantic`).
-3. **Validação Determinística e Testes Exaustivos:** Ao detectar que a extração bruta do PDF apresentava palavras quebradas linha a linha, iteramos com o assistente para construir uma expressão regular de higienização e validamos o resultado através de **32 testes unitários dedicados exclusivamente às regras do PDF** antes de acoplar o LLM.
-4. **Revisão Humana e Curadoria:** Todas as decisões de arquitetura, regras de negócio no `PricingService`, modelagem de schemas de ferramentas e verificação factual das transcrições foram revisadas e validadas passo a passo.
+- **Linguagem & Runtime:** Python 3.11+
+- **Framework Web & API:** FastAPI, Uvicorn, Pydantic v2
+- **Provedor de IA & Modelos:** Groq API (`qwen/qwen3.8-27b`, `openai/gpt-oss-120b`, `openai/gpt-oss-20b`)
+- **Acesso a Dados & RAG:** SQLite 3, BM25 (`rank-bm25`), RapidFuzz, pypdf
+- **Interface & Terminal:** Vanilla JS (Glassmorphism UI, CSS 3D Transforms, SVG), Rich CLI
+- **Qualidade & Testes:** Pytest, AnyIO, Starlette TestClient

@@ -1,4 +1,4 @@
-"""Repository for customer lookup and identification."""
+"""Repository for customer lookup, registration, and address management."""
 
 from pathlib import Path
 import re
@@ -46,7 +46,7 @@ class CustomerRepository:
         # Check exact email match
         norm_q = normalize_text(clean_id)
         email_matches = [
-            c for c in all_customers if normalize_text(c["email"]) == norm_q
+            c for c in all_customers if c.get("email") and normalize_text(c["email"]) == norm_q
         ]
         if email_matches:
             return email_matches
@@ -57,13 +57,67 @@ class CustomerRepository:
             phone_matches = [
                 c
                 for c in all_customers
-                if digits_only in re.sub(r"\D", "", c["phone"])
+                if c.get("phone") and digits_only in re.sub(r"\D", "", str(c["phone"]))
             ]
             if phone_matches:
                 return phone_matches
 
         # Check name match
         name_matches = [
-            c for c in all_customers if norm_q in normalize_text(c["name"])
+            c for c in all_customers if c.get("name") and norm_q and norm_q in normalize_text(c["name"])
         ]
         return name_matches
+
+    def create_customer(
+        self,
+        name: str,
+        phone: Optional[str] = None,
+        email: Optional[str] = None,
+        city: Optional[str] = "Campo Grande",
+        address: Optional[str] = None,
+        cep: Optional[str] = None,
+    ) -> int:
+        """
+        Insert a new customer into the database and return the newly generated customer_id.
+        """
+        with db_cursor(self.db_path) as cursor:
+            # Determine next customer_id if auto-increment is not default
+            cursor.execute("SELECT COALESCE(MAX(customer_id), 0) + 1 AS next_id FROM customers;")
+            next_id = cursor.fetchone()["next_id"]
+
+            cursor.execute(
+                """
+                INSERT INTO customers (customer_id, name, phone, email, city, address, cep)
+                VALUES (?, ?, ?, ?, ?, ?, ?);
+                """,
+                (next_id, name.strip(), phone, email, city, address, cep),
+            )
+            return next_id
+
+    def update_address(
+        self,
+        identifier: str,
+        address: str,
+        cep: Optional[str] = None,
+        city: Optional[str] = None,
+    ) -> bool:
+        """
+        Update the delivery address and optional CEP/city for a customer matching identifier.
+        """
+        matched = self.find_customers(identifier)
+        if not matched:
+            return False
+
+        target_id = matched[0]["customer_id"]
+        with db_cursor(self.db_path) as cursor:
+            if city:
+                cursor.execute(
+                    "UPDATE customers SET address = ?, cep = ?, city = ? WHERE customer_id = ?;",
+                    (address.strip(), cep, city.strip(), target_id),
+                )
+            else:
+                cursor.execute(
+                    "UPDATE customers SET address = ?, cep = ? WHERE customer_id = ?;",
+                    (address.strip(), cep, target_id),
+                )
+            return cursor.rowcount > 0

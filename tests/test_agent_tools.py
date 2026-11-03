@@ -142,6 +142,7 @@ def test_llm_fallback_mechanism_on_primary_failure(agent_db: Path) -> None:
 
     mock_client.chat.completions.create.side_effect = side_effect
     agent.client = mock_client
+    agent.sessions["test_fallback"] = {"customer": {"name": "Carlos Eduardo", "email": "carlos@test.com"}}
 
     result = agent.run("Olá, bom dia!", session_id="test_fallback")
     assert call_models == ["qwen/qwen3.8-27b", "openai/gpt-oss-120b"]
@@ -269,3 +270,120 @@ def test_make_llm_tool_payload_compacts_catalog_output() -> None:
         assert "price" in sample
         assert "pix_price" in sample
         assert "stock" in sample
+
+
+def test_cep_service_lookup_and_formatting() -> None:
+    """Verify CepService cleans, formats, and resolves known Brazilian CEPs."""
+    from src.services.cep_service import CepService
+
+    # 1. Clean & format
+    assert CepService.clean_cep("79202-333") == "79202333"
+    assert CepService.clean_cep("79.202-333") == "79202333"
+    assert CepService.clean_cep(None) == ""
+    assert CepService.format_cep("79202333") == "79202-333"
+
+    # 2. Known headquarters CEP
+    hq = CepService.lookup_cep("79202-333")
+    assert hq["found"] is True
+    assert hq["city"] == "Campo Grande"
+    assert hq["state"] == "MS"
+    assert "14 de Maio" in hq["street"]
+
+    # 3. Known MS city CEP
+    dourados = CepService.lookup_cep("79800000")
+    assert dourados["found"] is True
+    assert dourados["city"] == "Dourados"
+    assert dourados["state"] == "MS"
+
+    # 4. Invalid CEP
+    invalid = CepService.lookup_cep("123")
+    assert invalid["found"] is False
+
+
+def test_tool_executor_register_customer_and_address_update(agent_db: Path) -> None:
+    """Verify ToolExecutor registers a new customer with CEP enrichment and updates address."""
+    executor = ToolExecutor(db_path=agent_db)
+
+    # 1. Register unregistered customer with CEP
+    reg_result = executor.register_customer(
+        name="Lucas Gabriel Silveira",
+        phone="(67) 99911-2233",
+        email="lucas.silveira@exemplo.com",
+        cep="79202-333",
+        address="123, Apto 101",
+    )
+    assert reg_result["success"] is True
+    assert reg_result["customer_id"] > 0
+    assert reg_result["city"] == "Campo Grande"
+    assert "14 de Maio" in reg_result["address"]
+
+    # 2. Customer can now be retrieved and authenticated
+    orders = executor.check_order_status(customer_identifier="(67) 99911-2233")
+    assert orders["customer"]["name"] == "Lucas Gabriel Silveira"
+
+    # 3. Update customer address
+    upd_result = executor.update_customer_address(
+        customer_identifier="lucas.silveira@exemplo.com",
+        address="Avenida Afonso Pena, 500, Sala 10",
+        cep="79002-000",
+    )
+    assert upd_result["success"] is True
+    assert upd_result["cep"] == "79002-000"
+    assert "Afonso Pena" in upd_result["updated_address"]
+
+
+def test_checkout_intent_guardrail_prevents_reopening_carousel(agent_db: Path) -> None:
+    """Verify is_checkout_intent correctly detects closing phrases and suppresses product carousels."""
+    from src.agents.assistant_agent import is_checkout_intent
+
+    # 1. Detection of various checkout phrasing
+    assert is_checkout_intent("quero fechar o pedido") is True
+    assert is_checkout_intent("quero fechar pedido") is True
+    assert is_checkout_intent("finalizar compra") is True
+    assert is_checkout_intent("concluir compra") is True
+    assert is_checkout_intent("checkout") is True
+    assert is_checkout_intent("Quero pagar agora") is True
+
+    # 2. Browsing phrasing is NOT checkout
+    assert is_checkout_intent("Quais opções de ukuleles disponíveis?") is False
+    assert is_checkout_intent("Tem violão de nylon?") is False
+
+    # 3. Running AssistantAgent with checkout intent returns empty products list
+    agent = AssistantAgent(db_path=agent_db)
+    # Simulate prior turns discussing ukuleles
+    prior_history = [
+        {"role": "user", "content": "Quais opções de ukuleles tem na loja?"},
+        {"role": "assistant", "content": "Temos opções como Shelby SU-21S e Kalani KAL-300S!"},
+    ]
+    # Even if previous turn had ukuleles, closing order must not return products
+    result = agent.run("quero fechar o pedido", session_id="test_chk_1", chat_history=prior_history)
+    assert result["products"] == []
+    # Must not have called search_instruments in this turn
+    tools_called_names = [t["tool"] for t in result["tools_called"]]
+    assert "search_instruments" not in tools_called_names
+    assert "get_instrument_details_and_pricing" not in tools_called_names
+
+
+def test_clean_carousel_mentions_replaces_with_lista_de_opcoes() -> None:
+    """Verify that mentions of 'carrossel' are sanitized to 'lista de opções disponíveis'."""
+    from src.agents.specialists import clean_carousel_mentions
+
+    msg1 = "Confira abaixo no carrossel as opções disponíveis e sinta-se à vontade para explorar os detalhes."
+    out1 = clean_carousel_mentions(msg1)
+    assert "carrossel" not in out1.lower()
+    assert "Confira abaixo a lista de opções disponíveis" in out1
+
+    msg2 = "Dá uma olhada no carrossel abaixo para conferir os detalhes, valores e adicionar direto ao carrinho. 🎸"
+    out2 = clean_carousel_mentions(msg2)
+    assert "carrossel" not in out2.lower()
+    assert "Confira abaixo a lista de opções disponíveis" in out2
+
+    msg3 = "Explore os cards abaixo para ver fotos e adicionar ao carrinho!"
+    out3 = clean_carousel_mentions(msg3)
+    assert "carrossel" not in out3.lower()
+    assert "Confira abaixo a lista de opções disponíveis" in out3
+
+    msg4 = "Você pode ver todos os violões no carrossel abaixo."
+    out4 = clean_carousel_mentions(msg4)
+    assert "carrossel" not in out4.lower()
+    assert "abaixo na lista de opções disponíveis" in out4

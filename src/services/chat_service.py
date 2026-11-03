@@ -81,12 +81,19 @@ class ChatService:
         """Reset conversation history for a given session_id."""
         with db_cursor(self.db_path) as cursor:
             cursor.execute("DELETE FROM chat_history WHERE session_id = ?;", (session_id,))
+        if hasattr(self.agent, "clear_session_state"):
+            self.agent.clear_session_state(session_id)
 
     def process_message(self, user_message: str, session_id: str = "default") -> Dict[str, Any]:
         """Process a user message with full session history and persist both turns."""
         prior_history = self.get_history(session_id=session_id, limit=12)
         formatted_history = [
-            {"role": h["role"], "content": h["content"]} for h in prior_history
+            {
+                "role": h["role"],
+                "content": h["content"],
+                "metadata": h.get("metadata", {}),
+            }
+            for h in prior_history
         ]
 
         self._save_message(session_id=session_id, role="user", content=user_message)
@@ -106,6 +113,7 @@ class ChatService:
                 "confidence": result.get("confidence"),
                 "model_used": result.get("model_used"),
                 "tools_called": result.get("tools_called", []),
+                "active_agent": result.get("active_agent", "catalog"),
                 "logged_failed_intent": result.get("logged_failed_intent", False),
             },
         )
