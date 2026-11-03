@@ -59,6 +59,10 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
                         "type": "string",
                         "description": "Optional filter for electroacoustic/pickup: 'yes' (elétrico/eletroacústico) or 'no' (acústico).",
                     },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of instruments to return (defaults to 60).",
+                    },
                 },
                 "required": [],
             },
@@ -357,6 +361,7 @@ class ToolExecutor:
         only_on_promotion: bool = False,
         strings_type: Optional[str] = None,
         electronics: Optional[str] = None,
+        limit: int = 60,
     ) -> Dict[str, Any]:
         """Execute catalog search and attach alternatives if specific items are unavailable."""
         # When browsing a category or general instrument types, default to in-stock and active items
@@ -383,7 +388,7 @@ class ToolExecutor:
             only_on_promotion=only_on_promotion,
             strings_type=strings_type,
             electronics=electronics,
-            limit=15,
+            limit=limit,
         )
 
         # If user searched for a specific item that is out of stock, discontinued, or coming_soon,

@@ -200,6 +200,7 @@ class AssistantAgent:
         norm = normalize_text(stripped)
         words = re.findall(r"[a-z]+", norm)
         vowels = set("aeiou")
+        digits = re.sub(r"\D", "", stripped)
         if words:
             vowel_words = [w for w in words if any(ch in vowels for ch in w)]
             if len(vowel_words) == 0 or (
@@ -212,7 +213,7 @@ class AssistantAgent:
                     "language": lang,
                     "strategy": "ask_rephrase_with_options",
                 }
-        elif not stripped.isdigit():
+        elif not digits:
             return {
                 "is_clear": False,
                 "reason": "no_recognizable_words",
@@ -600,11 +601,99 @@ class AssistantAgent:
             "logged_failed_intent": False,
         }
 
+    def _detect_add_to_cart_intent(self, user_message: str) -> Optional[Tuple[Dict[str, Any], int]]:
+        """
+        Detects if user intends to purchase or add a specific musical instrument to their cart via chat text,
+        e.g.: 'quero 2 Yamaha C40 Nylon Natural', 'adicionar 1 Yamaha F310 ao carrinho', 'quero comprar 2 Yamaha C40'.
+        Returns the resolved product dict and quantity, or None if it's general browsing or checkout closing.
+        """
+        norm = normalize_text(user_message).lower()
+        if "selecionei no carrinho" in norm:
+            return None
+
+        if any(k in norm for k in [
+            "fechar carrinho", "fechar pedido", "fechar o pedido", "fechar meu pedido",
+            "finalizar compra", "finalizar o pedido", "finalizar pedido", "concluir compra",
+            "concluir pedido", "concluir o pedido", "vamos fechar",
+            "vamos pagar", "quero pagar", "quero fechar", "fechar a compra",
+            "pagar agora", "checkout"
+        ]) or is_checkout_intent(user_message):
+            return None
+
+        is_browsing = any(q in norm for q in [
+            "ver", "olhar", "mostrar", "quais", "qual", "opcoes", "recomendar", "recomenda",
+            "catalogo", "modelos", "quanto custa", "tem disponivel", "tem em estoque", "existe",
+            "comparar", "diferenca"
+        ])
+        explicit_cart = any(k in norm for k in [
+            "carrinho", "adicionar", "adiciona", "colocar", "coloca", "coloque",
+            "bota", "bote", "incluir", "inclui", "por", "poe"
+        ])
+        if is_browsing and not explicit_cart:
+            return None
+
+        is_intent = explicit_cart or any(w in norm for w in [
+            "quero", "comprar", "levar", "vou levar", "pode ser", "adiciona", "adicionar", "coloca"
+        ]) or bool(re.search(r"^\s*\d+\s*x\s+", user_message))
+        if not is_intent:
+            return None
+
+        qty = 1
+        qty_m = re.search(
+            r"(?:quero|adicionar|adiciona|coloca|coloque|bota|bote|comprar|levar|^)\s*(\d+)\s*(?:x|unidades?|itens?)?\b",
+            user_message,
+            re.IGNORECASE,
+        )
+        if qty_m and 1 <= int(qty_m.group(1)) <= 100:
+            qty = int(qty_m.group(1))
+        else:
+            standalone_m = re.search(r"\b(\d+)\s*(?:x|unidades?|itens?)?\b", user_message)
+            if standalone_m and 1 <= int(standalone_m.group(1)) <= 100:
+                qty = int(standalone_m.group(1))
+
+        all_products = self.tool_executor.product_repo.search_products(limit=200)
+        best_p = None
+        best_score = 0
+        norm_clean = re.sub(r"[^a-z0-9]", "", norm)
+        for p in all_products:
+            p_norm = normalize_text(p["name"]).lower()
+            p_norm_clean = re.sub(r"[^a-z0-9]", "", p_norm)
+            if p_norm in norm or (len(p_norm_clean) >= 4 and p_norm_clean in norm_clean):
+                score = 1000 + len(p_norm)
+            else:
+                tokens = [
+                    t for t in p_norm.split()
+                    if len(t) >= 2 and t not in [
+                        "nylon", "natural", "aco", "folk", "eletrico", "preto", "sunburst",
+                        "soprano", "tenor", "concert", "violao", "guitarra", "baixo",
+                        "bateria", "ukulele", "de", "do", "da", "com"
+                    ]
+                ]
+                matching = []
+                for t in tokens:
+                    t_clean = re.sub(r"[^a-z0-9]", "", t)
+                    if t in norm or (len(t_clean) >= 2 and t_clean in norm_clean):
+                        matching.append(t)
+                if len(matching) >= 2:
+                    score = 500 + sum(len(t) for t in matching)
+                elif len(matching) == 1 and any(ch.isdigit() for ch in matching[0]):
+                    score = 300 + len(matching[0])
+                else:
+                    score = 0
+            if score > best_score:
+                best_score = score
+                best_p = p
+
+        if best_p and best_score >= 100:
+            return best_p, qty
+        return None
+
     def run(
         self,
         user_message: str,
         session_id: str = "default",
         chat_history: Optional[List[Dict[str, str]]] = None,
+        cart: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Orchestrates multi-agent routing and execution following the conversational state machine:
@@ -648,6 +737,32 @@ class AssistantAgent:
         # Retrieve active session state
         history = chat_history or []
         sess = self._get_session(session_id=session_id, chat_history=history)
+
+        # Synchronize cart payload if provided by frontend or caller
+        if cart:
+            cart_items = []
+            total = 0.0
+            has_promo = False
+            for item in cart:
+                pid = item.get("product_id")
+                prod = self.tool_executor.product_repo.get_by_id(pid) if pid else None
+                if not prod:
+                    prod = {
+                        "product_id": pid or 0,
+                        "name": item.get("name", "Instrumento"),
+                        "price_brl": float(item.get("price_brl", 0.0)),
+                        "effective_price_brl": float(item.get("effective_price_brl") or item.get("price_brl", 0.0)),
+                    }
+                qty = int(item.get("qty", 1))
+                u_p = float(prod.get("effective_price_brl") or prod.get("price_brl", 0.0))
+                total += u_p * qty
+                if prod.get("active_promotion"):
+                    has_promo = True
+                cart_items.append((prod, qty))
+            if cart_items:
+                sess["cart_items"] = cart_items
+                sess["cart_total"] = total
+                sess["has_promo"] = has_promo
 
         all_msgs = history + [{"role": "user", "content": user_message}]
         claimed_name = extract_claimed_customer_name(all_msgs)
@@ -761,9 +876,19 @@ class AssistantAgent:
 
         # 3. Explicit Customer Identification Check (Email or Phone)
         email_match = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", user_message)
-        digits_only = re.sub(r"\D", "", user_message)
-        is_phone = 8 <= len(digits_only) <= 12 and len(user_message.strip().split()) <= 4
-        is_email = bool(email_match) and len(user_message.strip().split()) <= 4
+        phone_match = re.search(r"(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?(?:9\s*)?\d{4}[-\s]?\d{4}", user_message)
+        digits_only = re.sub(r"\D", "", phone_match.group(0)) if phone_match else re.sub(r"\D", "", user_message)
+        has_phone_digits = 8 <= len(digits_only) <= 13
+        in_checkout_stages = sess.get("stage") in (
+            "CHECKOUT_ADDRESS_CONFIRM", "CHECKOUT_PAYMENT_SELECT",
+            "CHECKOUT_INSTALLMENT_SELECTION", "CHECKOUT_FINAL_CONFIRM"
+        )
+        is_phone = has_phone_digits and (
+            (sess.get("customer") is None and not in_checkout_stages)
+            or any(k in norm_user_msg for k in ["telefone", "zap", "whatsapp", "celular", "meu contato", "sou o", "meu zap"])
+            or len(user_message.strip().split()) <= 3
+        )
+        is_email = bool(email_match)
 
         last_agent = IntentRouter.get_last_active_agent(history)
         if is_email or is_phone:
@@ -852,13 +977,14 @@ class AssistantAgent:
 
         # 5. New Customer Confirmation -> Speaks about Termo de Aceite (LGPD)
         is_new_cust = (
-            norm_user_msg in ("sim, sou novo cliente", "sou novo cliente", "sim sou novo cliente", "sou novo", "novo cliente", "sim")
+            norm_user_msg in ("sim, sou novo cliente", "sou novo cliente", "sim sou novo cliente", "sou novo", "novo cliente", "sim", "sou novo por aqui")
+            or any(k in norm_user_msg for k in ["novo cliente", "sou novo", "sou novo por aqui"])
             or re.search(r"\b(?:sim,?\s*)?(?:sou\s+)?novo\s+cliente\b", norm_user_msg)
         )
         if (
             (is_new_cust and ("novo cliente" in last_assistant_msg or sess.get("stage") == "AWAITING_NEW_OR_RETRY"))
             or norm_user_msg in ("sim, sou novo cliente", "sou novo cliente", "sou novo", "novo cliente")
-            or (sess.get("customer") is None and is_new_cust and norm_user_msg != "sim")
+            or (sess.get("customer") is None and is_new_cust and norm_user_msg not in ("sim", "quero me cadastrar", "fazer cadastro"))
         ):
             sess["stage"] = "TERMS_CONSENT"
             return {
@@ -883,7 +1009,10 @@ class AssistantAgent:
 
         # 6. Terms Acceptance or Rejection
         if norm_user_msg in ("aceito os termos", "aceito", "concordo", "sim, aceito", "aceitar termos", "sim aceito", "eu aceito") or (
-            sess.get("stage") == "TERMS_CONSENT" and norm_user_msg in ("sim", "aceito", "concordo", "ok", "claro")
+            sess.get("stage") == "TERMS_CONSENT" and (
+                norm_user_msg in ("sim", "aceito", "concordo", "ok", "claro", "pode ser", "tudo bem")
+                or any(k in norm_user_msg for k in ["aceito", "concordo", "aceitar"])
+            )
         ):
             sess["terms_accepted"] = True
             sess["stage"] = "REGISTER_CONTACT"
@@ -1079,9 +1208,150 @@ class AssistantAgent:
                         "logged_failed_intent": False,
                     }
 
+        # 7.5. Intent to Add Product to Cart via Chat Text (e.g. "quero 2 Yamaha C40 Nylon Natural", "adicionar 1 Yamaha F310 ao carrinho")
+        add_cart_match = self._detect_add_to_cart_intent(user_message)
+        if add_cart_match:
+            p, req_qty = add_cart_match
+            avail_stock = int(p.get("stock_quantity", 0))
+            if avail_stock <= 0 or p.get("status") != "active":
+                alts = self.tool_executor.product_repo.get_alternatives_for_unavailable(p)
+                alt_names = [f"• **{alt['name']}** (R$ {alt['effective_price_brl']:,.2f})".replace(",", "X").replace(".", ",").replace("X", ".") for alt in alts[:3]]
+                alt_text = "\n".join(alt_names) if alt_names else "Consulte nosso catálogo para outros modelos semelhantes."
+                return {
+                    "reply": (
+                        f"Puxa, o instrumento **{p['name']}** está temporariamente esgotado no momento. 🎸\n\n"
+                        f"Mas temos ótimas alternativas disponíveis em estoque agora mesmo:\n{alt_text}\n\n"
+                        "Gostaria de conhecer algum desses modelos?"
+                    ),
+                    "language": detected_lang,
+                    "confidence": 1.0,
+                    "model_used": "direct_out_of_stock",
+                    "tools_called": [],
+                    "products": alts[:3],
+                    "active_agent": "catalog",
+                    "action": None,
+                    "options": [alt["name"] for alt in alts[:3]],
+                    "logged_failed_intent": False,
+                }
+
+            final_qty = min(avail_stock, req_qty)
+            cart_items = sess.get("cart_items") or []
+            existing_idx = None
+            for idx, (cp, cqty) in enumerate(cart_items):
+                if cp["product_id"] == p["product_id"]:
+                    existing_idx = idx
+                    break
+
+            if existing_idx is not None:
+                old_p, old_qty = cart_items[existing_idx]
+                new_qty = min(avail_stock, old_qty + final_qty)
+                cart_items[existing_idx] = (old_p, new_qty)
+            else:
+                cart_items.append((p, final_qty))
+
+            sess["cart_items"] = cart_items
+            tot_val = sum(float(cp.get("effective_price_brl") or cp.get("price_brl", 0.0)) * cqty for cp, cqty in cart_items)
+            tot_items = sum(cqty for _, cqty in cart_items)
+            sess["cart_total"] = tot_val
+            sess["has_promo"] = any(bool(cp.get("active_promotion")) for cp, _ in cart_items)
+
+            def _fmt_m(val: float) -> str:
+                return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+            item_word = "1 item" if tot_items == 1 else f"{tot_items} itens"
+            stock_warning = f" *(Ajustado para o máximo disponível em estoque: {avail_stock})*" if req_qty > avail_stock else ""
+
+            reply = (
+                f"🛒 **{final_qty}x {p['name']}** adicionado ao seu carrinho!{stock_warning}\n\n"
+                f"Seu carrinho agora possui **{item_word}** (Total: **{_fmt_m(tot_val)}**).\n\n"
+                "Deseja adicionar mais algum instrumento ou ver mais opções?"
+            )
+
+            return {
+                "reply": reply,
+                "language": detected_lang,
+                "confidence": 1.0,
+                "model_used": "direct_add_to_cart",
+                "tools_called": [],
+                "products": [],
+                "active_agent": "checkout",
+                "action": "ADD_TO_CART",
+                "product": p,
+                "qty": final_qty,
+                "options": ["🎸 Ver mais produtos", "🛒 Ver Carrinho", "⚡ Fechar Pedido"],
+                "logged_failed_intent": False,
+            }
+
+        # 7.6. Intent to View Current Cart
+        if any(k in norm_user_msg for k in ["ver carrinho", "meu carrinho", "itens no carrinho", "o que tem no carrinho", "abrir carrinho", "olhar carrinho"]) and not any(k in norm_user_msg for k in ["fechar", "finalizar"]):
+            cart_items = sess.get("cart_items") or []
+            if cart_items:
+                def _fmt_cart(val: float) -> str:
+                    return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                tot_items = sum(cqty for _, cqty in cart_items)
+                tot_word = "1 item" if tot_items == 1 else f"{tot_items} itens"
+                lines = [
+                    f"### 🛒 Itens no seu Carrinho ({tot_word})\n",
+                    "| Item | Quantidade | Valor Unitário | Subtotal |",
+                    "| :--- | :---: | :---: | :---: |",
+                ]
+                tot_reg = 0.0
+                for cp, cqty in cart_items:
+                    u_p = float(cp.get("effective_price_brl") or cp.get("price_brl", 0.0))
+                    sub = u_p * cqty
+                    tot_reg += sub
+                    lines.append(f"| {cp['name']} | {cqty} | {_fmt_cart(u_p)} | {_fmt_cart(sub)} |")
+                lines.append(f"| **Total do Pedido** | **{tot_word}** | | **{_fmt_cart(tot_reg)}** |\n")
+                lines.append("Deseja fechar o seu pedido agora ou adicionar mais produtos?")
+                return {
+                    "reply": "\n".join(lines),
+                    "language": detected_lang,
+                    "confidence": 1.0,
+                    "model_used": "direct_show_cart",
+                    "tools_called": [],
+                    "products": [],
+                    "active_agent": "checkout",
+                    "action": None,
+                    "options": ["⚡ Fechar Pedido", "🎸 Continuar Comprando"],
+                    "logged_failed_intent": False,
+                }
+
+        # 7.7. Order Tracking / History Inquiry (Direct dispatch to Support Specialist)
+        norm_clean_msg = normalize_text(user_message).lower()
+        is_order_tracking_query = any(k in norm_clean_msg for k in [
+            "rastreio", "rastrear", "rastreamento", "status do pedido", "status de pedido",
+            "status dos pedidos", "status da entrega", "status das entregas",
+            "onde esta meu pedido", "onde esta o pedido", "onde estao meus pedidos",
+            "cade meu pedido", "cade o pedido", "cade meus pedidos", "minha entrega",
+            "acompanhar pedido", "acompanhamento do pedido", "acompanhar meus pedidos",
+            "consultar pedido", "consultar pedidos", "consultar rastreio",
+            "consultar meus pedidos", "ver meu pedido", "ver meus pedidos", "meus pedidos",
+            "meu pedido", "pedidos anteriores", "compras anteriores", "minhas compras",
+            "minha compra", "historico de pedidos", "historico de compras",
+            "meu pedido ja saiu", "meus pedidos ja sairam", "quando chega meu pedido",
+            "quando chega", "previsao de entrega"
+        ]) or norm_clean_msg in ("pedidos", "meus pedidos", "compras", "rastreio", "meu rastreio")
+
+        if is_order_tracking_query and not any(k in norm_clean_msg for k in ["fechar", "finalizar", "concluir", "pagar"]):
+            return self.support_agent.execute(
+                user_message=user_message,
+                session_id=session_id,
+                chat_history=history,
+                claimed_customer_name=claimed_name,
+                session_context=sess,
+            )
+
         # 8. Checkout Intent: Intention to close order / checkout
-        is_checkout_intent_flag = is_checkout_intent(user_message)
-        if is_checkout_intent_flag or "fechar carrinho" in norm_user_msg or "fechar pedido" in norm_user_msg or "finalizar compra" in norm_user_msg:
+        is_checkout_intent_flag = is_checkout_intent(user_message) or any(
+            k in norm_user_msg for k in [
+                "fechar carrinho", "fechar pedido", "fechar o pedido", "fechar meu pedido",
+                "finalizar compra", "finalizar o pedido", "finalizar pedido", "concluir compra",
+                "concluir pedido", "concluir o pedido", "vamos fechar",
+                "vamos pagar", "quero pagar", "quero fechar", "fechar a compra",
+                "pagar agora", "fechar", "checkout"
+            ]
+        )
+        if is_checkout_intent_flag:
             found_items, total, has_promo = self.checkout_agent._parse_cart_items_and_total(
                 user_message=user_message,
                 chat_history=history,
@@ -1226,9 +1496,45 @@ class AssistantAgent:
                         "logged_failed_intent": False,
                     }
 
-        # 9. Payment Method Choice (PIX, Credit Card, Boleto, Debit Card, Combined)
-        is_pix_choice = any(k in norm_user_msg for k in ["pagar no pix", "no pix", "pix", "chave pix", "a vista no pix", "opcao pix"])
-        is_boleto_choice = any(k in norm_user_msg for k in ["boleto", "boleto bancario", "pagar no boleto", "no boleto", "opcao boleto"])
+        # 9. Address Confirmation in Checkout
+        clean_last_asst = re.sub(r"[*_]", "", last_assistant_msg).strip().lower()
+        in_addr_confirm = (
+            sess.get("stage") == "CHECKOUT_ADDRESS_CONFIRM"
+            or "o endereco de entrega esta correto" in clean_last_asst
+            or "deseja manter este endereco" in clean_last_asst
+            or "endereco de entrega cadastrado" in clean_last_asst
+        )
+
+        is_addr_negative = in_addr_confirm and (
+            norm_user_msg in (
+                "nao, alterar endereco", "alterar endereco", "mudar endereco", "trocar endereco",
+                "nao", "endereco errado", "atualizar endereco", "mudar o endereco", "trocar o endereco",
+                "outro endereco", "novo endereco", "mudou", "errado", "incorreto", "negativo", "nao quero"
+            )
+            or any(w in norm_user_msg for w in [
+                "alterar endereco", "mudar endereco", "trocar endereco", "atualizar endereco",
+                "outro endereco", "novo endereco", "endereco errado", "mudar o endereco"
+            ])
+        )
+
+        is_addr_affirmative = in_addr_confirm and not is_addr_negative and (
+            norm_user_msg in (
+                "sim, endereco correto", "endereco correto", "esta correto", "sim", "correto",
+                "pode ser esse", "manter este endereco", "manter endereco", "manter", "tudo certo",
+                "ta certo", "esse mesmo", "este mesmo", "pode mandar", "ok", "beleza", "confirmo",
+                "exato", "perfeito", "claro", "isso", "positivo", "sim por favor", "sim pode ser",
+                "pode ser", "sim ta certo", "sim esta correto", "sim esta certo", "ta correto",
+                "manda nesse", "esse", "este", "certo"
+            )
+            or any(w in norm_user_msg for w in [
+                "correto", "certo", "manter", "pode ser esse", "esse mesmo", "manda nesse",
+                "tudo certo", "ta certo", "confirmo", "perfeito", "endereco correto"
+            ])
+        )
+
+        # Check if user made a payment choice while waiting for address confirmation
+        is_pix_choice = any(k in norm_user_msg for k in ["pagar no pix", "no pix", "pix", "chave pix", "a vista no pix", "opcao pix", "vou de pix"])
+        is_boleto_choice = any(k in norm_user_msg for k in ["boleto", "boleto bancario", "pagar no boleto", "no boleto", "opcao boleto", "vou de boleto"])
         is_debit_choice = any(k in norm_user_msg for k in ["cartao de debito", "debito", "no debito", "pagar no debito", "pagar em debito"])
         is_combined_choice = any(k in norm_user_msg for k in ["combinado", "pagamento combinado", "pix e cartao", "pix + cartao", "combinar"])
         is_credit_choice = (
@@ -1236,11 +1542,9 @@ class AssistantAgent:
             and not is_combined_choice
             and any(k in norm_user_msg for k in ["cartao de credito", "credito", "cartao", "pagar no cartao", "pagar no cartao de credito", "parcelado", "parcelar", "vezes", "12x", "8x", "6x", "3x", "sem juros"])
         )
-
         has_payment_choice = is_pix_choice or is_credit_choice or is_boleto_choice or is_debit_choice or is_combined_choice
-        clean_last_asst = re.sub(r"[*_]", "", last_assistant_msg).strip()
 
-        if (sess.get("stage") in ("CHECKOUT_PAYMENT_METHOD", "CHECKOUT_ADDRESS_CONFIRM") or "forma de pagamento" in clean_last_asst or "qual forma de pagamento" in clean_last_asst) and has_payment_choice:
+        if in_addr_confirm and has_payment_choice and not is_addr_affirmative and not is_addr_negative:
             cur_total = float(sess.get("cart_total") or 0.0)
             max_inst = 1
             for n in range(12, 0, -1):
@@ -1277,7 +1581,6 @@ class AssistantAgent:
             sess["payment_method"] = chosen_method
             sess["stage"] = "CHECKOUT_ADDRESS_CONFIRM"
 
-            method_label_disp = method_label
             cust = sess.get("customer")
             if not cust and history:
                 for msg in reversed(history):
@@ -1317,34 +1620,11 @@ class AssistantAgent:
                     "options": ["Sim, endereço correto", "Não, alterar endereço"],
                     "logged_failed_intent": False,
                 }
-            else:
-                return {
-                    "reply": (
-                        f"Forma de pagamento selecionada: **{method_label}**! 🎶\n\n"
-                        "Para confirmarmos o envio e emitirmos a nota fiscal, por favor informe seu **e-mail** ou **telefone/WhatsApp** cadastrado:"
-                    ),
-                    "language": detected_lang,
-                    "confidence": 1.0,
-                    "model_used": "direct_checkout_address_confirm",
-                    "tools_called": [],
-                    "products": [],
-                    "active_agent": "checkout",
-                    "action": None,
-                    "options": ["Fazer meu cadastro"],
-                    "logged_failed_intent": False,
-                }
 
-        # 10. Address Confirmation in Checkout
-        # 10.1. Address is INCORRECT -> Open Address Form
-        if (sess.get("stage") == "CHECKOUT_ADDRESS_CONFIRM" or "o endereco de entrega esta correto" in clean_last_asst or "deseja manter este endereco" in clean_last_asst) and (
-            norm_user_msg in ("nao, alterar endereco", "alterar endereco", "mudar endereco", "trocar endereco", "nao", "endereco errado", "atualizar endereco")
-            or "alterar endereco" in norm_user_msg
-        ):
+        if is_addr_negative:
             sess["stage"] = "CHECKOUT_ADDRESS_UPDATE"
             return {
-                "reply": (
-                    "Sem problemas! Preencha o formulário abaixo com o seu novo endereço de entrega:"
-                ),
+                "reply": "Sem problemas! Preencha o formulário abaixo com o seu novo endereço de entrega:",
                 "language": detected_lang,
                 "confidence": 1.0,
                 "model_used": "direct_form_trigger",
@@ -1356,18 +1636,27 @@ class AssistantAgent:
                 "logged_failed_intent": False,
             }
 
-        # 10.2. Address is CORRECT -> Build Final Checkout Summary
-        if (sess.get("stage") == "CHECKOUT_ADDRESS_CONFIRM" or "o endereco de entrega esta correto" in clean_last_asst or "deseja manter este endereco" in clean_last_asst) and (
-            norm_user_msg in ("sim, endereco correto", "endereco correto", "esta correto", "sim", "correto", "pode ser esse", "manter este endereco", "manter endereco", "manter", "tudo certo")
-            or "correto" in norm_user_msg or "manter" in norm_user_msg
-        ):
+        if is_addr_affirmative:
             return self._build_final_checkout_summary(sess=sess, detected_lang=detected_lang)
 
-        # 10.3. Address Update from Final Summary Review
-        if (sess.get("stage") in ("CHECKOUT_FINAL_CONFIRM", "CHECKOUT_INSTALLMENT_SELECTION", "CHECKOUT_PAYMENT_SELECT") or "como voce deseja realizar o pagamento" in clean_last_asst or "podemos confirmar e finalizar o seu pedido" in clean_last_asst) and (
-            norm_user_msg in ("nao, alterar endereco", "alterar endereco", "mudar endereco", "trocar endereco", "endereco errado", "atualizar endereco")
-            or "alterar endereco" in norm_user_msg
-        ):
+        # 10. Checkout Flow: Payment Choice, Installment Selection, Final Confirmation
+        in_checkout_confirm_stage = (
+            in_addr_confirm
+            or sess.get("stage") in (
+                "CHECKOUT_PAYMENT_SELECT", "CHECKOUT_INSTALLMENT_SELECTION", "CHECKOUT_FINAL_CONFIRM"
+            )
+            or "como voce deseja realizar o pagamento" in clean_last_asst
+            or "podemos confirmar e finalizar o seu pedido" in clean_last_asst
+            or "opcoes de parcelamento no cartao" in clean_last_asst
+            or "resumo final do pedido" in clean_last_asst
+        )
+
+        # 10.1. Address Update from Final Summary Review
+        is_change_addr = in_checkout_confirm_stage and any(k in norm_user_msg for k in [
+            "nao, alterar endereco", "alterar endereco", "mudar endereco", "trocar endereco",
+            "endereco errado", "atualizar endereco", "mudar o endereco", "trocar o endereco", "novo endereco"
+        ])
+        if is_change_addr:
             sess["stage"] = "CHECKOUT_ADDRESS_UPDATE"
             return {
                 "reply": "Sem problemas! Preencha o formulário abaixo com o novo endereço de entrega:",
@@ -1382,26 +1671,93 @@ class AssistantAgent:
                 "logged_failed_intent": False,
             }
 
-        # 10.4. Change Payment Method ("Não, alterar pagamento")
-        is_change_payment = (
-            (sess.get("stage") in ("CHECKOUT_FINAL_CONFIRM", "CHECKOUT_INSTALLMENT_SELECTION", "CHECKOUT_PAYMENT_SELECT") or "podemos confirmar e finalizar o seu pedido" in clean_last_asst or "opcoes de parcelamento no cartao" in clean_last_asst)
-            and any(k in norm_user_msg for k in [
+        # 10.2. Change Payment Method ("Não, alterar pagamento")
+        is_change_payment = in_checkout_confirm_stage and (
+            any(k in norm_user_msg for k in [
                 "nao, alterar pagamento", "alterar pagamento", "mudar pagamento",
                 "trocar pagamento", "outra forma de pagamento", "mudar forma de pagamento",
-                "trocar forma de pagamento", "escolher outro pagamento"
+                "trocar forma de pagamento", "escolher outro pagamento", "mudar a forma",
+                "trocar a forma", "quero mudar o pagamento", "quero trocar o pagamento"
             ])
+            or (sess.get("stage") == "CHECKOUT_FINAL_CONFIRM" and norm_user_msg in ("nao", "nao quero", "alterar", "mudar"))
         )
         if is_change_payment:
             sess["stage"] = "CHECKOUT_PAYMENT_SELECT"
             return self._build_final_checkout_summary(sess=sess, detected_lang=detected_lang)
 
-        # 10.5. Request installment options (Parcelar no Cartão)
-        is_request_installments = (
-            (sess.get("stage") in ("CHECKOUT_FINAL_CONFIRM", "CHECKOUT_INSTALLMENT_SELECTION", "CHECKOUT_PAYMENT_SELECT") or "como voce deseja realizar o pagamento" in clean_last_asst)
-            and any(k in norm_user_msg for k in ["parcelar", "parcelamento", "ver parcelas", "opcoes de parcelamento", "quero parcelar", "tabela de parcelas"])
-            and ("ate" in norm_user_msg or not re.search(r"\b(\d+)\s*x\s+de\b", norm_user_msg))
-            and norm_user_msg not in [f"{n}x" for n in range(1, 13)]
+        # 10.3. Final Order Confirmation in CHECKOUT_FINAL_CONFIRM or with selected payment method
+        is_order_confirmation = (
+            (sess.get("stage") == "CHECKOUT_FINAL_CONFIRM" or (sess.get("stage") == "CHECKOUT_PAYMENT_SELECT" and sess.get("payment_method")))
+            and not is_change_payment
+            and not is_change_addr
+            and (
+                norm_user_msg in (
+                    "sim, confirmar pedido", "confirmar pedido", "confirmar", "sim", "pode confirmar",
+                    "finalizar pedido", "finalizar", "concluir pedido", "concluir", "fechar",
+                    "sim confirmar pedido", "pode fechar", "pode concluir", "sim pode confirmar",
+                    "pode finalizar", "tudo certo", "tudo certo pode finalizar", "fechado", "beleza",
+                    "manda ver", "com certeza", "ok", "pode ser", "confirmo", "perfeito", "isso",
+                    "positivo", "confirmado", "aprovar", "pode gerar", "sim, confirmar", "sim por favor",
+                    "sim tudo certo", "com certeza pode confirmar", "pode mandar", "mandar bala"
+                )
+                or any(k in norm_user_msg for k in [
+                    "confirmar pedido", "pode confirmar", "finalizar pedido", "concluir pedido",
+                    "pode fechar", "pode finalizar", "tudo certo pode", "sim confirmo"
+                ])
+            )
         )
+
+        # 10.4. Installment Pattern & Method Detection
+        is_single_digit_inst = (
+            sess.get("stage") == "CHECKOUT_INSTALLMENT_SELECTION"
+            and norm_user_msg.isdigit()
+            and 1 <= int(norm_user_msg) <= 12
+        )
+        is_pix_select = in_checkout_confirm_stage and any(k in norm_user_msg for k in [
+            "pagar no pix", "no pix", "pix", "chave pix", "a vista no pix", "vou de pix",
+            "quero pix", "manda o pix", "prefiro pix", "opcao pix"
+        ])
+        is_boleto_select = in_checkout_confirm_stage and any(k in norm_user_msg for k in [
+            "boleto", "boleto bancario", "pagar no boleto", "no boleto", "opcao boleto",
+            "vou de boleto", "gera boleto", "quero boleto"
+        ])
+        is_debit_select = in_checkout_confirm_stage and any(k in norm_user_msg for k in [
+            "cartao de debito", "debito", "no debito", "pagar no debito", "opcao debito"
+        ])
+        is_card_vista_select = in_checkout_confirm_stage and any(k in norm_user_msg for k in [
+            "pagar a vista no cartao", "cartao a vista", "1x no cartao", "a vista no cartao",
+            "1x", "1 vez", "uma vez", "uma parcela"
+        ])
+        is_combined_select = in_checkout_confirm_stage and any(k in norm_user_msg for k in [
+            "pagamento combinado", "combinado", "pix e cartao", "pix + cartao", "metade no pix"
+        ])
+
+        # 10.5. Request installment options (Parcelar no Cartão / Opções de parcelas)
+        is_request_installments = (
+            in_checkout_confirm_stage
+            and not is_order_confirmation
+            and not is_pix_select
+            and not is_boleto_select
+            and not is_debit_select
+            and not is_card_vista_select
+            and not is_combined_select
+            and any(k in norm_user_msg for k in [
+                "parcelar", "parcelamento", "ver parcelas", "opcoes de parcelamento",
+                "quero parcelar", "tabela de parcelas", "quantas vezes", "dividir no cartao",
+                "cartao de credito", "cartao", "no cartao", "credito", "pagar no cartao",
+                "pagar com cartao", "dividir em parcelas", "parcelas"
+            ])
+            and not re.search(r"\b\d+\s*x\s+de\b", norm_user_msg)
+            and not re.search(r"^\s*\d+\s*x\s*$", norm_user_msg)
+            and not re.search(r"^\s*\d+\s*(?:vezes|parcelas)\s*$", norm_user_msg)
+            and not re.search(r"\bem\s+\d+\s*x\b", norm_user_msg)
+            and not re.search(r"\bem\s+\d+\s*(?:vezes|parcelas)\b", norm_user_msg)
+            and not is_single_digit_inst
+        )
+
+        inst_match = None
+        if not is_request_installments:
+            inst_match = re.search(r"\b(\d+)\s*x\b", norm_user_msg) or re.search(r"\b(\d+)\s*(?:vezes|parcelas)\b", norm_user_msg)
         if is_request_installments:
             sess["stage"] = "CHECKOUT_INSTALLMENT_SELECTION"
             cust = sess.get("customer") or {}
@@ -1466,39 +1822,15 @@ class AssistantAgent:
                 "logged_failed_intent": False,
             }
 
-        # 10.6. Payment Method or Installment Selection -> Displays Final Order Review
-        in_checkout_confirm_stage = (
-            sess.get("stage") in ("CHECKOUT_FINAL_CONFIRM", "CHECKOUT_INSTALLMENT_SELECTION", "CHECKOUT_PAYMENT_SELECT")
-            or "como voce deseja realizar o pagamento" in clean_last_asst
-            or "podemos confirmar e finalizar o seu pedido" in clean_last_asst
-            or "opcoes de parcelamento no cartao" in clean_last_asst
-        )
-
-        inst_match = re.search(r"\b(\d+)\s*x\b", norm_user_msg) or re.search(r"\b(\d+)\s*(?:vezes|parcelas)\b", norm_user_msg)
-        is_specific_inst = bool(inst_match and in_checkout_confirm_stage and not is_request_installments)
-
-        is_pix_select = in_checkout_confirm_stage and any(k in norm_user_msg for k in ["pagar no pix", "no pix", "pix", "chave pix", "a vista no pix"])
-        is_boleto_select = in_checkout_confirm_stage and any(k in norm_user_msg for k in ["boleto", "boleto bancario", "pagar no boleto", "no boleto"])
-        is_debit_select = in_checkout_confirm_stage and any(k in norm_user_msg for k in ["cartao de debito", "debito", "no debito", "pagar no debito"])
-        is_card_vista_select = in_checkout_confirm_stage and any(k in norm_user_msg for k in ["pagar a vista no cartao", "cartao a vista", "1x no cartao", "a vista no cartao", "pagar no cartao de credito"])
-        is_combined_select = in_checkout_confirm_stage and any(k in norm_user_msg for k in ["pagamento combinado", "combinado", "pix e cartao", "pix + cartao"])
-
-        is_order_confirmation = (
-            norm_user_msg in (
-                "sim, confirmar pedido", "confirmar pedido", "confirmar", "sim", "pode confirmar",
-                "finalizar pedido", "finalizar", "concluir pedido", "concluir", "fechar",
-                "sim confirmar pedido", "pode fechar", "pode concluir", "sim pode confirmar"
-            )
-            or (sess.get("stage") == "CHECKOUT_FINAL_CONFIRM" and "confirmar" in norm_user_msg)
-            or (sess.get("stage") == "CHECKOUT_FINAL_CONFIRM" and norm_user_msg in ("sim", "pode ser", "ok", "confirmo", "tudo certo", "pode finalizar", "sim, confirmar"))
-        )
-
-        # When customer selects a payment method / installment -> present intermediate final order review for confirmation
-        if not is_order_confirmation:
+        # 10.6. Payment Method / Installment Selection -> Displays Final Order Review
+        if not is_order_confirmation and in_checkout_confirm_stage:
             if is_pix_select:
                 return self._build_final_order_review(sess=sess, detected_lang=detected_lang, method="pix")
-            elif is_specific_inst and inst_match:
+            elif inst_match:
                 chosen_n = int(inst_match.group(1))
+                return self._build_final_order_review(sess=sess, detected_lang=detected_lang, method="credit_card", installments=chosen_n)
+            elif is_single_digit_inst:
+                chosen_n = int(norm_user_msg)
                 return self._build_final_order_review(sess=sess, detected_lang=detected_lang, method="credit_card", installments=chosen_n)
             elif is_card_vista_select:
                 return self._build_final_order_review(sess=sess, detected_lang=detected_lang, method="credit_card", installments=1)
@@ -1634,7 +1966,7 @@ class AssistantAgent:
                 "tools_called": [],
                 "products": [],
                 "active_agent": "checkout",
-                "action": None,
+                "action": "CLEAR_CART",
                 "options": ["🔄 Novo Atendimento", "📍 Informações da Loja"],
                 "logged_failed_intent": False,
             }
@@ -1649,6 +1981,7 @@ class AssistantAgent:
             session_id=session_id,
             chat_history=history,
             claimed_customer_name=claimed_name,
+            session_context=sess,
         )
         if result and "reply" in result:
             from src.agents.specialists import clean_carousel_mentions

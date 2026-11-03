@@ -769,6 +769,328 @@ def test_checkout_summary_presents_payment_and_installment_options(multi_agent_d
     assert any("Cartão" in opt or "Parcelar" in opt for opt in res_back["options"])
 
 
+def test_natural_language_free_text_checkout_flow_pix(multi_agent_db: Path) -> None:
+    """
+    Verify complete natural language conversational flow without clicking any UI buttons:
+    1. 'quero fechar o pedido' with synchronized cart payload.
+    2. 'está correto' / 'ta certo' for address confirmation.
+    3. 'vou de pix' for payment choice.
+    4. 'pode confirmar' for final order placement.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_nl_pix_free_text"
+
+    # 1. Customer Identification via free text
+    agent.run("lucas.mendes@jmail.com", session_id=sess_id)
+
+    # 2. Free text checkout intent with frontend-synced cart
+    cart_payload = [
+        {"product_id": 1, "name": "Tagima Memphis AC-39 Nylon Natural", "price_brl": 429.90, "effective_price_brl": 429.90, "qty": 2}
+    ]
+    res1 = agent.run("quero fechar o pedido", session_id=sess_id, cart=cart_payload)
+    assert "Resumo do seu Pedido" in res1["reply"]
+    assert "859,80" in res1["reply"]
+    assert "endereço de entrega está correto" in res1["reply"].lower()
+
+    # 3. Free text address confirmation ("está correto")
+    res2 = agent.run("está correto", session_id=sess_id)
+    assert "Como você deseja realizar o pagamento" in res2["reply"]
+    assert any("PIX" in opt for opt in res2["options"])
+
+    # 4. Free text payment selection ("vou de pix")
+    res3 = agent.run("vou de pix", session_id=sess_id)
+    assert "Resumo Final do Pedido" in res3["reply"]
+    assert "À vista no PIX" in res3["reply"]
+    assert "816,81" in res3["reply"]  # 859.80 - 5% = 816.81
+
+    # 5. Free text final order confirmation ("pode confirmar")
+    res4 = agent.run("pode confirmar", session_id=sess_id)
+    assert "Pedido Confirmado com Sucesso" in res4["reply"]
+    assert "/api/pix-qrcode" in res4["reply"]
+    assert "Código PIX Copia e Cola" in res4["reply"]
+    assert "Lucas" in res4["reply"]
+
+
+def test_natural_language_free_text_checkout_flow_installments(multi_agent_db: Path) -> None:
+    """
+    Verify complete natural language conversational flow for credit card installments without buttons:
+    1. 'vamos fechar a compra' with synchronized cart items.
+    2. 'ta certo pode mandar nesse' for address confirmation.
+    3. 'quero parcelar no cartao' triggers installment options table.
+    4. 'em 8x' selects 8 installments and presents final review.
+    5. 'tudo certo pode finalizar' confirms order.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_nl_installments_free_text"
+
+    # 1. Customer Identification
+    agent.run("lucas.mendes@jmail.com", session_id=sess_id)
+
+    # 2. Free text checkout with cart payload
+    cart_payload = [
+        {"product_id": 1, "name": "Tagima Memphis AC-39 Nylon Natural", "price_brl": 429.90, "effective_price_brl": 429.90, "qty": 2}
+    ]
+    res1 = agent.run("vamos fechar a compra", session_id=sess_id, cart=cart_payload)
+    assert "Resumo do seu Pedido" in res1["reply"]
+    assert "endereço de entrega está correto" in res1["reply"].lower()
+
+    # 3. Free text address confirmation ("ta certo")
+    res2 = agent.run("ta certo pode mandar nesse", session_id=sess_id)
+    assert "Como você deseja realizar o pagamento" in res2["reply"]
+
+    # 4. Free text request for installments ("quero parcelar no cartao")
+    res3 = agent.run("quero parcelar no cartão", session_id=sess_id)
+    assert "Opções de Parcelamento no Cartão de Crédito sem Juros" in res3["reply"]
+    assert "8x" in res3["reply"]
+
+    # 5. Free text installment selection ("em 8x")
+    res4 = agent.run("em 8x", session_id=sess_id)
+    assert "Resumo Final do Pedido" in res4["reply"]
+    assert "8x de R$ 107,47 sem juros" in res4["reply"]
+    assert "Podemos confirmar e finalizar o seu pedido?" in res4["reply"]
+
+    # 6. Free text final order confirmation ("tudo certo pode finalizar")
+    res5 = agent.run("tudo certo pode finalizar", session_id=sess_id)
+    assert "Pedido Confirmado com Sucesso" in res5["reply"]
+    assert "8x de R$ 107,47 sem juros" in res5["reply"]
+    assert "Lucas" in res5["reply"]
+
+
+def test_add_to_cart_via_text_without_carousel(multi_agent_db: Path) -> None:
+    """
+    Verify that typing 'quero 2 Yamaha C40 Nylon Natural' directly adds items to cart
+    instead of displaying the product search carousel.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_text_add_cart_no_carousel"
+
+    # Identify user
+    agent.run("lucas.mendes@jmail.com", session_id=sess_id)
+
+    # User expresses direct buy/add-to-cart intent via chat text
+    res = agent.run("quero 2 Yamaha C40 Nylon Natural", session_id=sess_id)
+
+    assert res["action"] == "ADD_TO_CART"
+    assert res["product"]["name"] == "Yamaha C40 Nylon Natural"
+    assert res["qty"] == 2
+    assert len(res["products"]) == 0  # No carousel returned!
+    assert "2x Yamaha C40 Nylon Natural" in res["reply"]
+    assert "adicionado ao seu carrinho" in res["reply"]
+    assert "carrossel" not in res["reply"].lower()
+
+
+def test_add_to_cart_and_checkout_flow_all_in_text(multi_agent_db: Path) -> None:
+    """
+    Test full cycle without touching any buttons:
+    1. Identify user via email.
+    2. Add product via chat text ("quero 1 Shelby SN-100").
+    3. Type "quero fechar o pedido".
+    4. Confirm address via text ("sim, endereco correto").
+    5. Choose payment method via text ("pix").
+    6. Confirm final order via text ("sim, confirmar pedido").
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_text_cycle_full"
+
+    # 1. Identify user
+    agent.run("lucas.mendes@jmail.com", session_id=sess_id)
+
+    # 2. Add product via chat text
+    res_add = agent.run("quero 1 Shelby SN-100", session_id=sess_id)
+    assert res_add["action"] == "ADD_TO_CART"
+    assert res_add["qty"] == 1
+    assert len(res_add["products"]) == 0
+
+    # 3. Checkout via chat text
+    res_chk = agent.run("quero fechar o pedido", session_id=sess_id)
+    assert "Resumo do seu Pedido" in res_chk["reply"]
+    assert "Shelby SN-100" in res_chk["reply"]
+    assert "endereço de entrega está correto" in res_chk["reply"].lower()
+
+    # 4. Address confirmation via text
+    res_addr = agent.run("sim, endereco correto", session_id=sess_id)
+    assert "Como você deseja realizar o pagamento" in res_addr["reply"]
+
+    # 5. Payment choice via text
+    res_pay = agent.run("pagar no pix", session_id=sess_id)
+    assert "Resumo Final do Pedido" in res_pay["reply"]
+    assert "À vista no PIX" in res_pay["reply"]
+
+    # 6. Final confirmation via text
+    res_fin = agent.run("sim, confirmar pedido", session_id=sess_id)
+    assert "Pedido Confirmado com Sucesso" in res_fin["reply"]
+    assert res_fin["action"] == "CLEAR_CART"
+
+
+def test_formatted_phone_numbers_identification_and_verification(multi_agent_db: Path) -> None:
+    """
+    Verify that formatted phone numbers with hyphens, parentheses, and spaces (e.g. '6799123-0123')
+    are correctly recognized as phone identification inputs and NOT flagged as low confidence or gibberish.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+
+    # 1. Registered customer phone with hyphen '6799123-0123' (Fernanda Almeida)
+    res1 = agent.run("6799123-0123", session_id="test_fmt_phone_1")
+    assert res1["model_used"] == "direct_customer_verification"
+    assert res1["active_agent"] == "customer"
+    assert "Fernanda Almeida" in res1["reply"]
+    assert "guardrail_low_confidence" not in res1["model_used"]
+
+    # 2. Registered customer phone with parentheses and space '(67) 99123-0123'
+    res2 = agent.run("(67) 99123-0123", session_id="test_fmt_phone_2")
+    assert res2["model_used"] == "direct_customer_verification"
+    assert "Fernanda Almeida" in res2["reply"]
+
+    # 3. Registered customer phone without DDD '99123-0123'
+    res3 = agent.run("99123-0123", session_id="test_fmt_phone_3")
+    assert res3["model_used"] == "direct_customer_verification"
+    assert "Fernanda Almeida" in res3["reply"]
+
+    # 4. Unregistered customer phone with hyphen '6799988-7766'
+    res4 = agent.run("6799988-7766", session_id="test_fmt_phone_4")
+    assert res4["model_used"] == "direct_customer_verification"
+    assert "Não localizamos" in res4["reply"] or "novo cliente" in res4["reply"].lower()
+    assert "Sim, sou novo cliente" in res4["options"]
+    assert "guardrail_low_confidence" not in res4["model_used"]
+
+
+def test_authenticated_customer_with_no_orders_tracking_inquiry(multi_agent_db: Path) -> None:
+    """
+    Verify that an authenticated customer without any registered orders (e.g., Fernanda Almeida)
+    who asks 'quero saber sobre meu rastreio' is informed clearly that there are no orders/tracking linked to their account.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_fernanda_tracking_suite"
+
+    # Step 1: Customer identification
+    res1 = agent.run("6799123-0123", session_id=sess_id)
+    assert "Fernanda Almeida" in res1["reply"]
+
+    # Step 2: Customer asks for tracking
+    res2 = agent.run("quero saber sobre meu rastreio", session_id=sess_id)
+    assert res2["active_agent"] == "support"
+    assert res2["model_used"] == "direct_order_tracking"
+    assert "não há nenhum pedido ou código de rastreio vinculado" in res2["reply"].lower()
+    assert "Fernanda Almeida" in res2["reply"]
+
+
+def test_authenticated_customer_with_active_order_tracking_inquiry(multi_agent_db: Path) -> None:
+    """
+    Verify that an authenticated customer with active orders (e.g., Ana Carolina Ferreira)
+    who asks 'quero saber sobre meu rastreio' receives complete order details, status, and tracking code.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_ana_tracking_suite"
+
+    # Step 1: Customer identification
+    res1 = agent.run("(67) 99654-7821", session_id=sess_id)
+    assert "Ana Carolina" in res1["reply"]
+
+    # Step 2: Customer asks for tracking
+    res2 = agent.run("quero saber sobre meu rastreio", session_id=sess_id)
+    assert res2["active_agent"] == "support"
+    assert res2["model_used"] == "direct_order_tracking"
+    assert "BRJL5544332BR" in res2["reply"]
+    assert "Pedido #8" in res2["reply"]
+    assert "Enviado / Em trânsito" in res2["reply"]
+
+
+def test_authenticated_customer_ver_meus_pedidos_no_orders(multi_agent_db: Path) -> None:
+    """
+    Verify that Fernanda Almeida (no registered orders) who inputs 'quero ver meus pedidos'
+    is routed strictly to SupportAgent, receives a clear message that no orders are linked,
+    and NO product carousel or instruments are returned.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_fernanda_meus_pedidos"
+
+    # Step 1: Identification via phone with hyphen
+    res1 = agent.run("6799123-0123", session_id=sess_id)
+    assert "Fernanda Almeida" in res1["reply"]
+
+    # Step 2: Customer asks 'quero ver meus pedidos'
+    res2 = agent.run("quero ver meus pedidos", session_id=sess_id)
+    assert res2["active_agent"] == "support"
+    assert res2["model_used"] == "direct_order_tracking"
+    assert "não há nenhum pedido ou código de rastreio vinculado" in res2["reply"].lower()
+    assert "Fernanda Almeida" in res2["reply"]
+    assert len(res2["products"]) == 0
+
+
+def test_authenticated_customer_ver_meus_pedidos_with_orders(multi_agent_db: Path) -> None:
+    """
+    Verify that Ana Carolina Ferreira (has order #8) who inputs 'quero ver meus pedidos'
+    receives the complete breakdown of her orders without any instrument carousel.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_ana_meus_pedidos"
+
+    # Step 1: Identification
+    res1 = agent.run("(67) 99654-7821", session_id=sess_id)
+    assert "Ana Carolina" in res1["reply"]
+
+    # Step 2: Customer asks 'quero ver meus pedidos'
+    res2 = agent.run("quero ver meus pedidos", session_id=sess_id)
+    assert res2["active_agent"] == "support"
+    assert res2["model_used"] == "direct_order_tracking"
+    assert "Pedido #8" in res2["reply"]
+    assert "BRJL5544332BR" in res2["reply"]
+    assert len(res2["products"]) == 0
+
+
+def test_intent_router_classifies_order_and_history_queries() -> None:
+    """
+    Verify that IntentRouter correctly routes all variations of order and history inquiries to support.
+    """
+    order_queries = [
+        "quero ver meus pedidos",
+        "ver meus pedidos",
+        "meus pedidos",
+        "minhas compras",
+        "pedidos anteriores",
+        "historico de pedidos",
+        "onde estao meus pedidos",
+        "status do pedido",
+        "quero saber sobre meu rastreio",
+        "consultar meus pedidos",
+        "quando chega meu pedido",
+    ]
+    for q in order_queries:
+        stage = IntentRouter.classify_stage(q)
+        assert stage == "support", f"Query '{q}' was classified as '{stage}', expected 'support'"
+
+
+def test_catalog_query_price_limit_2000_returns_all_products_not_truncated_to_15(multi_agent_db: Path) -> None:
+    """
+    Verify that querying products up to R$ 2000 returns all matching products (37 items)
+    and is not arbitrarily truncated to 15, reaching instruments close to R$ 2000.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_catalog_ceiling_2000"
+
+    # Pre-identify customer
+    agent.run("6799123-0123", session_id=sess_id)
+
+    # Ask for products up to R$ 2000
+    res = agent.run("quero ver produtos até 2000 reais", session_id=sess_id)
+    assert res["active_agent"] == "catalog"
+    products = res.get("products", [])
+    assert len(products) >= 30, f"Expected at least 30 instruments under R$2000, got {len(products)}"
+    for p in products:
+        assert p["effective_price_brl"] <= 2000.0
+        assert p["stock_quantity"] > 0
+        assert p["status"] == "active"
+
+    max_price = max(p["effective_price_brl"] for p in products)
+    assert max_price > 1800.0, f"Expected max price close to 2000, got {max_price}"
+
+
+
+
+
+
+
+
 
 
 

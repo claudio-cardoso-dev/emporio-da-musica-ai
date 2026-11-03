@@ -84,7 +84,12 @@ class ChatService:
         if hasattr(self.agent, "clear_session_state"):
             self.agent.clear_session_state(session_id)
 
-    def process_message(self, user_message: str, session_id: str = "default") -> Dict[str, Any]:
+    def process_message(
+        self,
+        user_message: str,
+        session_id: str = "default",
+        cart: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """Process a user message with full session history and persist both turns."""
         prior_history = self.get_history(session_id=session_id, limit=12)
         formatted_history = [
@@ -102,6 +107,7 @@ class ChatService:
             user_message=user_message,
             session_id=session_id,
             chat_history=formatted_history,
+            cart=cart,
         )
 
         self._save_message(

@@ -6,7 +6,7 @@
 ![Architecture](https://img.shields.io/badge/Architecture-Specialist%20Multi--Agent-6366F1)
 ![Database](https://img.shields.io/badge/Database-SQLite%20%2B%20Hybrid%20RAG-003B57?logo=sqlite&logoColor=white)
 ![APIs](https://img.shields.io/badge/Integrations-ViaCEP%20%2B%20PIX%20SVG-059669)
-![Pytest](https://img.shields.io/badge/Tests-95%20Passed-10B981?logo=pytest&logoColor=white)
+![Pytest](https://img.shields.io/badge/Tests-105%20Passed-10B981?logo=pytest&logoColor=white)
 
 > **Assistente Conversacional de E-commerce com IA & Arquitetura Multiagente Especializada**  
 > Desenvolvido para a **Empório da Música** (*"Sua música começa aqui"* — Campo Grande/MS), fundamentado em **Clean Architecture, SOLID, Function Calling Nativo, RAG Semântico Híbrido, Motor Financeiro Determinístico e Interface Conversacional Glassmorphism**.
@@ -108,7 +108,7 @@ flowchart TD
  ┃   ┣ 📜 chat_service.py            # Persistência de sessões e histórico de mensagens
  ┃   ┣ 📜 pix_service.py             # Geração de payload PIX Copia-e-Cola e QR Code dinâmico em SVG
  ┃   ┗ 📜 pricing_service.py         # Cálculos de desconto PIX (5%), parcelas e frete por localidade
- ┣ 📂 tests/                         # Suíte automatizada com 93 testes (Unitários, RAG, API e E2E)
+ ┣ 📂 tests/                         # Suíte automatizada com 97 testes (Unitários, RAG, API e E2E)
  ┣ 📜 .env.example                   # Modelo de configuração de ambiente
  ┣ 📜 main.py                        # Ponto de entrada unificado (--mode cli ou --mode api)
  ┣ 📜 pyproject.toml                 # Configuração de build e testes
@@ -141,6 +141,21 @@ flowchart TD
 - **Regras Estritas de Parcelamento:** As opções de parcelas respeitam as políticas da loja (mínimo de R$ 50,00 para até 3x; R$ 80,00 de 4x a 6x; e R$ 100,00 de 7x a 12x sem juros).
 - **Resumo Final Intermediário:** Ao escolher o método ou número de parcelas, o sistema gera uma tela de conferência detalhada com itens, frete, endereço e condição de pagamento, exigindo confirmação explícita (`Sim, confirmar pedido` / `Não, alterar pagamento`) antes de registrar o pedido.
 - **Segurança e Privacidade (LGPD):** A simulação é autenticada internamente sem necessidade de o cliente fornecer dados confidenciais de cartão (número, CVV ou senhas) no chat.
+
+### 6. Processamento Natural em Texto Livre e Continuidade de Contexto do LLM
+- **Sincronização Bidirecional e Mapeamento Semântico Completo:** O cliente pode interagir livremente por botões interativos ou texto livre em qualquer ponto da jornada (ex.: *"quero fechar o pedido"*, *"está correto"*, *"tá certo pode mandar nesse"*, *"vou de pix"*, *"quero parcelar no cartão"*, *"em 8x"*, *"pode confirmar"*, *"tudo certo pode finalizar"*). O payload do carrinho permanece sincronizado em tempo real entre o frontend e a sessão de backend.
+- **Injeção de Contexto Rico para o Modelo de Linguagem (LLM Continuity Directive):** Durante a orquestração multiagente, o estado da sessão (cliente identificado, itens do carrinho, valor total, endereço e estágio atual) é injetado diretamente no prompt de sistema dos agentes especialistas com diretiva estrita de continuidade conversacional. Assim, caso o cliente faça perguntas contextuais no meio do processo (ex.: prazos, garantia ou regulagem), o LLM compreende a história completa e conduz o atendimento sem perda de estado.
+
+### 7. Consulta Determinística de Rastreamento e Histórico de Pedidos (`SupportAgent`)
+- **Detecção Abrangente de Intenções:** Roteamento prioritário em `IntentRouter` para variações no singular e plural (*"quero ver meus pedidos"*, *"consultar meus pedidos"*, *"minhas compras"*, *"pedidos anteriores"*, *"histórico de pedidos"*, *"status do pedido"*, *"onde está meu rastreio"*).
+- **Validação de Titularidade (LGPD) e Resposta Fidedigna:** O bot consulta o banco relacional SQLite via `check_order_status`. Se o cliente autenticado possuir pedidos (ex.: *Ana Carolina Ferreira* com o Pedido #8), exibe o status detalhado, itens, valor, código de rastreamento (`BRJL5544332BR`) e previsão de entrega sem poluir a tela com carrosséis. Se o cliente não possuir pedidos vinculados (ex.: *Fernanda Almeida*), informa com total clareza e transparência que não há pedidos vinculados à conta, oferecendo opções de consulta por outro contato ou exploração do catálogo, prevenindo qualquer alucinação de ausência de suporte.
+
+### 8. Busca Ampla do Catálogo e Paginação Inteligente (`CatalogAgent`)
+- **Remoção de Truncamento Prematuro:** O limite padrão de busca em `ProductRepository` e `search_instruments` foi ampliado de 15 para **60 itens** (cobrindo todo o acervo ativo de 61 produtos da loja). Consultas abrangentes como *"quero ver produtos até 2000 reais"* agora retornam **todos os 37 instrumentos** disponíveis nessa faixa (de R$ 159,90 até R$ 1.967,18, incluindo violões Crafter, Yamaha APX, ukuleles barítonos e teclados), sem cortar a exibição nos itens mais baratos.
+- **Eficiência de Tokens (Groq TPM Guard):** Compactação inteligente de payload em `make_llm_tool_payload`, enviando uma amostra representativa de 10 itens para a síntese textual da LLM, enquanto entrega todos os 37 cards estruturados ao carrossel interativo do frontend.
+
+### 9. Normalização Flexível de Contatos Telefônicos
+- **Tratamento Resiliente de Formatos:** O `CustomerRepository` e o orquestrador aceitam números digitados com ou sem máscara, com ou sem DDD, e com ou sem hífens (ex.: `6799123-0123`, `(67) 99123-0123`, `99123-0123`), evitando bloqueios indevidos no guardrail de baixa confiança e garantindo identificação instantânea.
 
 ---
 
@@ -205,7 +220,7 @@ python main.py --mode cli
 
 ---
 
-## 🧪 Suíte de Testes Automatizados (95 Testes)
+## 🧪 Suíte de Testes Automatizados (105 Testes)
 
 A suíte de testes do projeto garante 100% de confiabilidade em todas as camadas da aplicação:
 - Ingestão de banco de dados e integridade referencial dos CSVs.

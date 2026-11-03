@@ -57,7 +57,10 @@ class CustomerRepository:
             phone_matches = [
                 c
                 for c in all_customers
-                if c.get("phone") and digits_only in re.sub(r"\D", "", str(c["phone"]))
+                if c.get("phone") and (
+                    digits_only in re.sub(r"\D", "", str(c["phone"]))
+                    or (len(re.sub(r"\D", "", str(c["phone"]))) >= 8 and re.sub(r"\D", "", str(c["phone"])) in digits_only)
+                )
             ]
             if phone_matches:
                 return phone_matches

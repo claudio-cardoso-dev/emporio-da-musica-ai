@@ -21,6 +21,10 @@ class ChatRequest(BaseModel):
         default="web_session_01",
         description="Unique session identifier for multi-turn conversation memory.",
     )
+    cart: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Current shopping cart items from frontend for synchronization.",
+    )
 
 
 class ChatResponse(BaseModel):
@@ -43,6 +47,14 @@ class ChatResponse(BaseModel):
     action: Optional[str] = Field(
         default=None,
         description="UI action triggered in chat (e.g. 'SHOW_REGISTER_FORM', 'SHOW_ADDRESS_FORM').",
+    )
+    product: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Product added to cart via chat text.",
+    )
+    qty: Optional[int] = Field(
+        default=None,
+        description="Quantity of product added to cart via chat text.",
     )
     options: List[str] = Field(
         default_factory=list,
@@ -1192,7 +1204,8 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       const totalRegular = cart.reduce((acc, i) => acc + (i.product.effective_price_brl || i.product.price_brl) * i.qty, 0);
       const itemsList = cart.map(i => `${i.qty}x ${i.product.name} (R$ ${(i.product.effective_price_brl || i.product.price_brl).toFixed(2).replace('.', ',')})`).join(", ");
       const totalFormatted = totalRegular.toFixed(2).replace('.', ',');
-      sendQuick(`Selecionei no carrinho: ${itemsList}. Valor total: R$ ${totalFormatted}. Quero fechar meu pedido!`);
+      appendMsg(`Selecionei no carrinho: ${itemsList}. Valor total: R$ ${totalFormatted}. Quero fechar meu pedido!`, "user");
+      sendMessageDirect(`Selecionei no carrinho: ${itemsList}. Valor total: R$ ${totalFormatted}. Quero fechar meu pedido!`, false);
     }
 
     function appendMsg(text, role, meta = null) {
@@ -1467,7 +1480,7 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
         if (m) window.lastUserEmail = m[0];
       }
       const digits = text.replace(/\\D/g, "");
-      if (digits.length >= 8 && digits.length <= 11) {
+      if (digits.length >= 8 && digits.length <= 13) {
         window.lastUserPhone = text;
       }
 
@@ -1510,20 +1523,43 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       }
 
       // Intercept Fechar Pedido when cart has items
-      const cleanLower = lower.replace(/[^a-z0-9\\s]/g, '').trim();
-      if ((cleanLower.includes("fechar pedido") || cleanLower.includes("finalizar compra") || cleanLower.includes("concluir compra") || cleanLower.includes("fechar carrinho") || cleanLower.includes("concluir pedido")) && cart.length > 0) {
+      const isCheckoutIntentText = !text.startsWith("Selecionei no carrinho:") && (
+        /(?:fechar|finalizar|concluir|terminar)\\s*(?:o|meu|o\\s*meu|esse|este|a)?\\s*(?:pedido|carrinho|compra)|(?:vamos|desejo)\\s*(?:fechar|finalizar|pagar)|(?:quero)\\s*(?:fechar|finalizar|pagar)(?:\\s*(?:o|meu)?\\s*(?:pedido|carrinho|compra))?|checkout/i.test(lower)
+      );
+      if (isCheckoutIntentText && cart.length > 0) {
         simulateCartWithAgent();
         return;
       }
 
       appendMsg(text, "user");
       try {
+        const cartPayload = cart.map(i => ({
+          product_id: i.product.product_id,
+          name: i.product.name,
+          price_brl: i.product.price_brl,
+          effective_price_brl: i.product.effective_price_brl || i.product.price_brl,
+          qty: i.qty
+        }));
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text, session_id: sessionId })
+          body: JSON.stringify({ message: text, session_id: sessionId, cart: cartPayload })
         });
         const data = await res.json();
+        if (data.action === "ADD_TO_CART" && data.product) {
+          const p = data.product;
+          const addQty = parseInt(data.qty, 10) || 1;
+          const existing = cart.find(item => item.product.product_id === p.product_id);
+          if (existing) {
+            existing.qty = Math.min(p.stock_quantity || 99, existing.qty + addQty);
+          } else {
+            cart.push({ product: p, qty: addQty });
+          }
+          updateCartUI();
+        } else if (data.action === "CLEAR_CART" || data.model_used === "direct_checkout_confirmed") {
+          cart = [];
+          updateCartUI();
+        }
         appendMsg(data.reply, "bot", data);
       } catch (e) {
         appendMsg("Erro ao comunicar com o servidor.", "bot");
@@ -1743,12 +1779,33 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
 
     async function sendMessageDirect(text) {
       try {
+        const cartPayload = cart.map(i => ({
+          product_id: i.product.product_id,
+          name: i.product.name,
+          price_brl: i.product.price_brl,
+          effective_price_brl: i.product.effective_price_brl || i.product.price_brl,
+          qty: i.qty
+        }));
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text, session_id: sessionId })
+          body: JSON.stringify({ message: text, session_id: sessionId, cart: cartPayload })
         });
         const data = await res.json();
+        if (data.action === "ADD_TO_CART" && data.product) {
+          const p = data.product;
+          const addQty = parseInt(data.qty, 10) || 1;
+          const existing = cart.find(item => item.product.product_id === p.product_id);
+          if (existing) {
+            existing.qty = Math.min(p.stock_quantity || 99, existing.qty + addQty);
+          } else {
+            cart.push({ product: p, qty: addQty });
+          }
+          updateCartUI();
+        } else if (data.action === "CLEAR_CART" || data.model_used === "direct_checkout_confirmed") {
+          cart = [];
+          updateCartUI();
+        }
         appendMsg(data.reply, "bot", data);
       } catch (e) {
         appendMsg("Erro ao comunicar com o servidor.", "bot");
@@ -1806,6 +1863,7 @@ def create_app(db_path: Optional[Path] = None, pdf_path: Optional[Path] = None) 
             result = chat_service.process_message(
                 user_message=payload.message,
                 session_id=payload.session_id,
+                cart=payload.cart,
             )
             return ChatResponse(
                 session_id=payload.session_id,
@@ -1817,6 +1875,8 @@ def create_app(db_path: Optional[Path] = None, pdf_path: Optional[Path] = None) 
                 products=result.get("products", []),
                 active_agent=result.get("active_agent", "catalog"),
                 action=result.get("action"),
+                product=result.get("product"),
+                qty=result.get("qty"),
                 options=result.get("options", []),
                 prefill=result.get("prefill"),
                 logged_failed_intent=result.get("logged_failed_intent", False),

@@ -105,7 +105,7 @@ class ProductRepository:
         only_on_promotion: bool = False,
         strings_type: Optional[str] = None,
         electronics: Optional[str] = None,
-        limit: int = 15,
+        limit: int = 60,
     ) -> List[Dict[str, Any]]:
         """
         Search products using structured filters combined with fuzzy/semantic matching.

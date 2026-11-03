@@ -291,16 +291,43 @@ class BaseSpecialistAgent:
         session_id: str,
         chat_history: Optional[List[Dict[str, str]]] = None,
         claimed_customer_name: Optional[str] = None,
+        session_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Execute the agent loop for this specialist."""
         detected_lang = detect_user_language(user_message)
         system_content = self.get_system_prompt(detected_lang)
 
+        # Inject rich session state and customer/cart context so LLM never loses track
+        if session_context:
+            cust = session_context.get("customer") or {}
+            cust_name = cust.get("name") or claimed_customer_name or "Cliente"
+            cust_phone = cust.get("phone", "")
+            cust_email = cust.get("email", "")
+            cust_addr = cust.get("address", "")
+            cust_city = cust.get("city", "")
+            cust_cep = cust.get("cep", "")
+
+            cart_items = session_context.get("cart_items") or []
+            cart_total = float(session_context.get("cart_total") or 0.0)
+            stage = session_context.get("stage", "SHOPPING")
+
+            cart_desc = ", ".join(f"{qty}x {p['name']}" for p, qty in cart_items) if cart_items else "Nenhum item adicionado"
+
+            context_block = f"""
+
+### CURRENT CONVERSATION & SESSION CONTEXT:
+- Customer Identified: {cust_name} (Phone: {cust_phone or 'Not set'}, Email: {cust_email or 'Not set'}, City: {cust_city or 'Not set'}, Address: {cust_addr or 'Not set'}, CEP: {cust_cep or 'Not set'})
+- Active Cart: {cart_desc} (Total: R$ {cart_total:,.2f})
+- Current Flow Stage: {stage}
+- CRITICAL CONTINUITY DIRECTIVE: Maintain full conversational continuity. You know exactly what products are in the customer's cart and what stage they are in. If the customer indicates an intent to continue shopping, confirm address, choose payment, or finalize their purchase, guide them smoothly without asking them to repeat details or re-enter items already in context.
+"""
+            system_content += context_block
+
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system_content}]
 
-        # Inject recent chat history (last 4 turns)
+        # Inject recent chat history (last 8 turns)
         history = chat_history or []
-        for msg in history[-4:]:
+        for msg in history[-8:]:
             if msg.get("role") in ("user", "assistant") and msg.get("content"):
                 c = msg["content"]
                 if len(c) > 600:
@@ -362,16 +389,23 @@ class BaseSpecialistAgent:
                             "instrumento", "instrumentos", "produto", "produtos", "opcao", "opcoes",
                             "opção", "opções", "catalogo", "catálogo", "modelo", "modelos", "preco",
                             "preço", "valor", "valores", "reais", "recomenda", "recomendacao",
-                            "barato", "baratos", "disponivel", "disponiveis", "estoque", "ver", "quais", "tem"
+                            "barato", "baratos", "disponivel", "disponiveis", "estoque",
+                            "ver catalogo", "ver produtos", "ver instrumentos", "quais", "tem"
                         ]
 
-                        if cat_found or brand_found or max_p is not None or only_promo or any(w in norm_u for w in catalog_keywords):
+                        is_order_inquiry = any(k in norm_u for k in [
+                            "pedido", "pedidos", "rastreio", "rastreamento", "compras anteriores",
+                            "minhas compras", "minha compra", "historico", "garantia", "troca", "devolucao"
+                        ])
+
+                        if not is_order_inquiry and (cat_found or brand_found or max_p is not None or only_promo or any(w in norm_u for w in catalog_keywords)):
                             forced_args = {
                                 "category_query": cat_found,
                                 "query": brand_found,
                                 "max_price": max_p,
                                 "only_available": True,
                                 "only_on_promotion": only_promo,
+                                "limit": 60,
                             }
                             tool_output = self.tool_executor.execute("search_instruments", forced_args)
                             tools_called_log.append({"tool": "search_instruments", "arguments": forced_args})
@@ -701,7 +735,7 @@ class CheckoutAgent(BaseSpecialistAgent):
                 found_items.append((p, qty))
 
         if not found_items and chat_history:
-            for msg in reversed(chat_history):
+            for msg in reversed(chat_history[-10:]):
                 c = msg.get("content", "")
                 norm_c = normalize_text(c).lower()
                 for p in all_prods:
@@ -713,8 +747,6 @@ class CheckoutAgent(BaseSpecialistAgent):
                         qty = int(qty_m.group(1)) if qty_m else 1
                         if not any(item[0]["product_id"] == p["product_id"] for item in found_items):
                             found_items.append((p, qty))
-                if found_items:
-                    break
 
         total_m = re.search(
             r"(?:total(?: do pedido| do carrinho)?|valor total)\s*:?\s*r?\$?\s*(\d+(?:[,\.]\d{2})?)",
@@ -805,6 +837,7 @@ class CheckoutAgent(BaseSpecialistAgent):
         session_id: str,
         chat_history: Optional[List[Dict[str, str]]] = None,
         claimed_customer_name: Optional[str] = None,
+        session_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Custom execute for CheckoutAgent. Automatically resolves products mentioned,
@@ -815,6 +848,12 @@ class CheckoutAgent(BaseSpecialistAgent):
             chat_history=chat_history,
         )
 
+        # Fallback to rich session context if message didn't specify items
+        if not found_items and session_context and session_context.get("cart_items"):
+            found_items = session_context["cart_items"]
+            total = float(session_context.get("cart_total") or 0.0)
+            has_promo = bool(session_context.get("has_promo", False))
+
         tools_called_log: List[Dict[str, Any]] = []
         if total > 0.0:
             dest_city = "Campo Grande"
@@ -824,6 +863,8 @@ class CheckoutAgent(BaseSpecialistAgent):
                 dest_city = "Corumbá"
             elif "tres lagoas" in user_message.lower():
                 dest_city = "Três Lagoas"
+            elif session_context and session_context.get("customer") and session_context["customer"].get("city"):
+                dest_city = session_context["customer"]["city"]
 
             sim_args = {
                 "amount_brl": total,
@@ -880,6 +921,7 @@ class CheckoutAgent(BaseSpecialistAgent):
             session_id=session_id,
             chat_history=chat_history,
             claimed_customer_name=claimed_customer_name,
+            session_context=session_context,
         )
 
 
@@ -936,4 +978,231 @@ class SupportAgent(BaseSpecialistAgent):
 - NEVER use robotic department labels like "Eu sou o agente de suporte".
 - Respond strictly in {user_language}. Be empathetic, respectful, and reassuring.
 """
+
+    def execute(
+        self,
+        user_message: str,
+        session_id: str,
+        chat_history: Optional[List[Dict[str, str]]] = None,
+        claimed_customer_name: Optional[str] = None,
+        session_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute post-sale support or order tracking.
+        When customer is already identified in session_context and asks about their order or tracking,
+        queries orders deterministically and returns active orders or states clearly if none exist.
+        """
+        norm_msg = normalize_text(user_message).lower()
+        is_tracking_intent = any(k in norm_msg for k in [
+            "rastreio", "rastrear", "rastreamento", "status do pedido", "status de pedido",
+            "status dos pedidos", "status da entrega", "status das entregas",
+            "onde esta meu pedido", "onde esta o pedido", "onde estao meus pedidos",
+            "cade meu pedido", "cade o pedido", "cade meus pedidos", "minha entrega",
+            "acompanhar pedido", "acompanhamento do pedido", "acompanhar meus pedidos",
+            "consultar pedido", "consultar pedidos", "consultar rastreio",
+            "consultar meus pedidos", "ver meu pedido", "ver meus pedidos", "meus pedidos",
+            "meu pedido", "pedidos anteriores", "compras anteriores", "minhas compras",
+            "minha compra", "historico de pedidos", "historico de compras",
+            "meu pedido ja saiu", "meus pedidos ja sairam", "quando chega meu pedido",
+            "quando chega", "previsao de entrega", "pedidos"
+        ]) or norm_msg in ("pedidos", "meus pedidos", "compras", "rastreio", "meu rastreio")
+
+        cust = session_context.get("customer") if session_context else None
+
+        # Check if user message provided an explicit order ID or tracking code
+        order_id_m = re.search(r"(?:pedido|ordem|numero|n[ºo°]|#)\s*#?\s*(\d+)", user_message, re.IGNORECASE)
+        req_order_id = int(order_id_m.group(1)) if order_id_m else None
+        track_m = re.search(r"\b(BR[A-Z0-9]{9}BR)\b", user_message, re.IGNORECASE)
+        req_tracking = track_m.group(1).upper() if track_m else None
+
+        if is_tracking_intent or req_order_id or req_tracking:
+            detected_lang = detect_user_language(user_message)
+            if cust:
+                cust_name = cust.get("name") or claimed_customer_name or "Cliente"
+                cust_identifier = cust.get("phone") or cust.get("email") or str(cust.get("customer_id"))
+
+                status_res = self.tool_executor.check_order_status(
+                    order_id=req_order_id,
+                    tracking_code=req_tracking,
+                    customer_identifier=cust_identifier,
+                    customer_name=cust_name,
+                )
+
+                tools_called_log = [{
+                    "tool": "check_order_status",
+                    "arguments": {
+                        "order_id": req_order_id,
+                        "tracking_code": req_tracking,
+                        "customer_identifier": cust_identifier,
+                        "customer_name": cust_name,
+                    }
+                }]
+
+                if status_res.get("ownership_mismatch"):
+                    return {
+                        "reply": (
+                            f"Olá, **{cust_name}**! Por questões de segurança e privacidade (LGPD), "
+                            "o pedido informado não está vinculado ao seu cadastro atual.\n\n"
+                            "Caso tenha realizado a compra com outro número ou e-mail, por favor me informe o contato correspondente!"
+                        ),
+                        "language": detected_lang,
+                        "confidence": 1.0,
+                        "model_used": "direct_order_tracking",
+                        "tools_called": tools_called_log,
+                        "products": [],
+                        "active_agent": self.name,
+                        "action": None,
+                        "options": ["📍 Informações da Loja", "🎸 Ver Catálogo"],
+                        "logged_failed_intent": False,
+                    }
+
+                orders = status_res.get("orders") or []
+                if orders:
+                    lines = [f"📦 **Status do seu Pedido — Empório da Música** 🎸\n"]
+                    for o in orders:
+                        oid = o.get("order_id")
+                        status = o.get("status", "")
+                        status_map = {
+                            "delivered": "✅ **Entregue com sucesso**",
+                            "shipped": "🚚 **Enviado / Em trânsito**",
+                            "confirmed": "📋 **Confirmado (Em separação para envio)**",
+                            "processing": "⏳ **Em processamento**",
+                            "cancelled": "❌ **Cancelado**",
+                        }
+                        status_label = status_map.get(status.lower(), f"📌 **{status.capitalize()}**")
+                        t_code = o.get("tracking_code")
+                        t_display = f"`{t_code}`" if t_code else "Entrega local via motoboy próprio"
+                        est_date = o.get("estimated_delivery") or "1 a 3 dias úteis"
+                        tot_val = float(o.get("total_brl") or 0.0)
+                        items = o.get("items") or []
+                        items_desc = ", ".join(f"{it['quantity']}x {it.get('product_name') or 'Item'}" for it in items) if items else "Instrumento(s) musical(is)"
+
+                        def _fmt_money(val: float) -> str:
+                            return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+                        lines.append(f"• **Pedido #{oid}:**")
+                        lines.append(f"  - **Status:** {status_label}")
+                        lines.append(f"  - **Itens:** {items_desc}")
+                        lines.append(f"  - **Valor Total:** {_fmt_money(tot_val)}")
+                        lines.append(f"  - **Código de Rastreamento:** {t_display}")
+                        lines.append(f"  - **Previsão de Entrega:** {est_date}")
+                        if o.get("notes"):
+                            lines.append(f"  - **Observações:** {o['notes']}")
+                        lines.append("")
+
+                    lines.append(f"**{cust_name}**, qualquer dúvida sobre a entrega ou código de rastreamento estamos à disposição!")
+                    return {
+                        "reply": "\n".join(lines).strip(),
+                        "language": detected_lang,
+                        "confidence": 1.0,
+                        "model_used": "direct_order_tracking",
+                        "tools_called": tools_called_log,
+                        "products": [],
+                        "active_agent": self.name,
+                        "action": None,
+                        "options": ["📍 Informações da Loja", "🎸 Ver Produtos em Promoção"],
+                        "logged_failed_intent": False,
+                    }
+                else:
+                    reply = (
+                        f"Olá, **{cust_name}**! Consultamos seu cadastro e verificamos que no momento "
+                        "**não há nenhum pedido ou código de rastreio vinculado à sua conta**. 📦\n\n"
+                        "Se você realizou uma compra recente com outro e-mail ou telefone, ou possui o número específico de outro pedido, "
+                        "por favor me informe para eu localizar para você!\n\n"
+                        "Como posso te ajudar agora? Você pode explorar nossos instrumentos musicais disponíveis no catálogo:"
+                    )
+                    return {
+                        "reply": reply,
+                        "language": detected_lang,
+                        "confidence": 1.0,
+                        "model_used": "direct_order_tracking",
+                        "tools_called": tools_called_log,
+                        "products": [],
+                        "active_agent": self.name,
+                        "action": None,
+                        "options": ["🎸 Violões até R$1000", "🌴 Ver Ukuleles", "🔥 Produtos em Promoção", "📍 Informações da Loja"],
+                        "logged_failed_intent": False,
+                    }
+            else:
+                # Customer not authenticated in session
+                email_match = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", user_message)
+                phone_match = re.search(r"(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?(?:9\s*)?\d{4}[-\s]?\d{4}", user_message)
+                digits_only = re.sub(r"\D", "", phone_match.group(0)) if phone_match else re.sub(r"\D", "", user_message)
+                has_phone = 8 <= len(digits_only) <= 13
+                if email_match or has_phone:
+                    pk = email_match.group(0) if email_match else digits_only
+                    status_res = self.tool_executor.check_order_status(
+                        order_id=req_order_id,
+                        tracking_code=req_tracking,
+                        customer_identifier=pk,
+                        customer_name=claimed_customer_name,
+                    )
+                    orders = status_res.get("orders") or []
+                    if status_res.get("found") and orders:
+                        verified_cust = status_res.get("customer") or {}
+                        c_name = verified_cust.get("name", "Cliente")
+                        lines = [f"📦 **Status do seu Pedido — Empório da Música** 🎸\n"]
+                        for o in orders:
+                            oid = o.get("order_id")
+                            status = o.get("status", "")
+                            status_map = {
+                                "delivered": "✅ **Entregue com sucesso**",
+                                "shipped": "🚚 **Enviado / Em trânsito**",
+                                "confirmed": "📋 **Confirmado (Em separação para envio)**",
+                                "processing": "⏳ **Em processamento**",
+                                "cancelled": "❌ **Cancelado**",
+                            }
+                            status_label = status_map.get(status.lower(), f"📌 **{status.capitalize()}**")
+                            t_code = o.get("tracking_code")
+                            t_display = f"`{t_code}`" if t_code else "Entrega local via motoboy próprio"
+                            est_date = o.get("estimated_delivery") or "1 a 3 dias úteis"
+                            tot_val = float(o.get("total_brl") or 0.0)
+
+                            def _fmt_money(val: float) -> str:
+                                return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+                            lines.append(f"• **Pedido #{oid}:**")
+                            lines.append(f"  - **Status:** {status_label}")
+                            lines.append(f"  - **Valor Total:** {_fmt_money(tot_val)}")
+                            lines.append(f"  - **Código de Rastreamento:** {t_display}")
+                            lines.append(f"  - **Previsão de Entrega:** {est_date}")
+                            lines.append("")
+
+                        return {
+                            "reply": "\n".join(lines).strip(),
+                            "language": detected_lang,
+                            "confidence": 1.0,
+                            "model_used": "direct_order_tracking",
+                            "tools_called": [{"tool": "check_order_status", "arguments": {"customer_identifier": pk}}],
+                            "products": [],
+                            "active_agent": self.name,
+                            "action": None,
+                            "options": ["📍 Informações da Loja", "🎸 Ver Produtos em Promoção"],
+                            "logged_failed_intent": False,
+                        }
+
+                reply = (
+                    "Para consultar o status do seu pedido e o código de rastreamento com segurança e privacidade (LGPD), "
+                    "por favor informe o seu **número de telefone/WhatsApp ou e-mail cadastrado**:"
+                )
+                return {
+                    "reply": reply,
+                    "language": detected_lang,
+                    "confidence": 1.0,
+                    "model_used": "direct_order_tracking",
+                    "tools_called": [],
+                    "products": [],
+                    "active_agent": self.name,
+                    "action": None,
+                    "options": ["Fazer meu cadastro", "📍 Informações da Loja"],
+                    "logged_failed_intent": False,
+                }
+
+        return super().execute(
+            user_message=user_message,
+            session_id=session_id,
+            chat_history=chat_history,
+            claimed_customer_name=claimed_customer_name,
+            session_context=session_context,
+        )
 
