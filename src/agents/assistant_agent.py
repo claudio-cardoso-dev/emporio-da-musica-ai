@@ -359,7 +359,7 @@ class AssistantAgent:
             discount_val = (total * 0.05) if not has_promo else 0.0
             total_final = (total - discount_val) + shipping_cost
             pay_lines = [
-                "• **Método Escolhido:** À vista no PIX (5% de desconto)",
+                "• **Método Escolhido:** À vista no PIX (5% de desconto)" if not has_promo else "• **Método Escolhido:** À vista no PIX",
                 f"• **Subtotal dos Produtos:** {_fmt(total)}",
             ]
             if discount_val > 0:
@@ -370,6 +370,47 @@ class AssistantAgent:
                 pay_lines.append("• **Frete:** Grátis")
             pay_lines.append(f"• **Valor Final a Pagar:** **{_fmt(total_final)}**\n")
             pay_lines.append("📱 *O QR Code PIX para pagamento será gerado logo após você confirmar o pedido.*")
+        elif method == "boleto":
+            total_final = total + shipping_cost
+            pay_lines = [
+                "• **Método Escolhido:** Boleto Bancário à vista",
+                f"• **Subtotal dos Produtos:** {_fmt(total)}",
+            ]
+            if shipping_cost > 0:
+                pay_lines.append(f"• **Custo de Frete:** {_fmt(shipping_cost)}")
+            else:
+                pay_lines.append("• **Frete:** Grátis")
+            pay_lines.append(f"• **Valor Final a Pagar:** **{_fmt(total_final)}**")
+            pay_lines.append("• **Prazo de Compensação:** Até 3 dias úteis após o pagamento.\n")
+            pay_lines.append("📄 *A linha digitável e o código de barras serão gerados logo após você confirmar o pedido.*")
+        elif method == "debit_card":
+            total_final = total + shipping_cost
+            pay_lines = [
+                "• **Método Escolhido:** Cartão de Débito à vista",
+                f"• **Subtotal dos Produtos:** {_fmt(total)}",
+            ]
+            if shipping_cost > 0:
+                pay_lines.append(f"• **Custo de Frete:** {_fmt(shipping_cost)}")
+            else:
+                pay_lines.append("• **Frete:** Grátis")
+            pay_lines.append(f"• **Valor Final a Pagar:** **{_fmt(total_final)}**\n")
+            pay_lines.append("🔒 *(Para fins de simulação e segurança, não é necessário digitar dados de cartão).*")
+        elif method == "combined":
+            total_final = total + shipping_cost
+            half_pix = total * 0.5
+            half_card = total_final - half_pix
+            pay_lines = [
+                "• **Método Escolhido:** Pagamento Combinado (Entrada no PIX + Cartão de Crédito)",
+                f"• **Subtotal dos Produtos:** {_fmt(total)}",
+            ]
+            if shipping_cost > 0:
+                pay_lines.append(f"• **Custo de Frete:** {_fmt(shipping_cost)}")
+            else:
+                pay_lines.append("• **Frete:** Grátis")
+            pay_lines.append(f"• **Valor Total do Pedido:** **{_fmt(total_final)}**")
+            pay_lines.append(f"  - **Entrada no PIX (50%):** {_fmt(half_pix)}")
+            pay_lines.append(f"  - **Saldo no Cartão de Crédito (50%):** {_fmt(half_card)} sem juros\n")
+            pay_lines.append("🔒 *(Para fins de simulação e segurança, não é necessário digitar dados de cartão).*")
         else:
             total_final = total + shipping_cost
             max_inst = 1
@@ -401,6 +442,7 @@ class AssistantAgent:
                 pay_lines.append(f"• **Parcelamento:** em até **{max_inst}x de {_fmt(inst_val)} sem juros** (ou 1x de {_fmt(total_final)})")
             else:
                 pay_lines.append(f"• **Parcelamento:** 1x de {_fmt(total_final)}")
+            pay_lines.append("\n🔒 *(Para fins de simulação e segurança, não é necessário digitar os dados do seu cartão).*")
 
         lines = [
             "🎉 **Pedido Pronto para Finalização — Resumo do Pedido** 🎶✨\n",
@@ -970,7 +1012,7 @@ class AssistantAgent:
                 lines.append(f"| **Subtotal dos Produtos** | **{tot_items} item(ns)** | | **{_fmt_money(total)}** |\n")
 
                 pix_val = total * 0.95 if not has_promo else total
-                lines.append("Como você prefere realizar o pagamento?")
+                lines.append("Como você prefere realizar o pagamento? Aceitamos as seguintes opções de acordo com as políticas da loja:")
                 if not has_promo:
                     lines.append(f"• ⚡ **À vista no PIX:** com 5% de desconto (**{_fmt_money(pix_val)}**)")
                 else:
@@ -993,22 +1035,37 @@ class AssistantAgent:
                         break
                 inst_val = total / max_inst
                 if max_inst > 1:
-                    lines.append(f"• 💳 **Cartão de Crédito:** em até **{max_inst}x de {_fmt_money(inst_val)} sem juros** (ou 1x de {_fmt_money(total)})\n")
+                    lines.append(f"• 💳 **Cartão de Crédito:** em até **{max_inst}x de {_fmt_money(inst_val)} sem juros** (ou 1x de {_fmt_money(total)})")
                 else:
-                    lines.append(f"• 💳 **Cartão de Crédito:** 1x de {_fmt_money(total)}\n")
+                    lines.append(f"• 💳 **Cartão de Crédito:** 1x de {_fmt_money(total)}")
+
+                lines.append(f"• 📄 **Boleto Bancário:** à vista no valor de **{_fmt_money(total)}** (compensação em até 3 dias úteis)")
+                lines.append(f"• 💳 **Cartão de Débito:** à vista no valor de **{_fmt_money(total)}** (todas as bandeiras aceitas)")
+
+                if total >= 2000.0:
+                    lines.append("• 🔀 **Pagamento Combinado:** entrada no PIX + saldo parcelado no Cartão de Crédito (permitido para compras acima de R$ 2.000,00)")
 
                 cust = sess.get("customer") or {}
                 cust_city = cust.get("city", "Campo Grande")
                 is_cg = "campo grande" in cust_city.lower()
                 if is_cg:
                     if total >= 300.0 or total == 0.0:
-                        lines.append("• 🚚 **Frete:** **Frete Grátis** para Campo Grande/MS via motoboy próprio da loja (1 a 3 dias úteis).\n")
+                        lines.append("\n• 🚚 **Frete:** **Frete Grátis** para Campo Grande/MS via motoboy próprio da loja (1 a 3 dias úteis).")
                     else:
-                        lines.append("• 🚚 **Frete:** R$ 25,00 para Campo Grande/MS via motoboy próprio da loja (1 a 3 dias úteis).\n")
+                        lines.append("\n• 🚚 **Frete:** R$ 25,00 para Campo Grande/MS via motoboy próprio da loja (1 a 3 dias úteis).")
                 else:
-                    lines.append(f"• 🚚 **Frete:** R$ 45,00 para {cust_city} via transportadora parceira (3 a 7 dias úteis).\n")
+                    lines.append(f"\n• 🚚 **Frete:** R$ 45,00 para {cust_city} via transportadora parceira (3 a 7 dias úteis).")
 
-                lines.append("Qual forma de pagamento você prefere: **Cartão de Crédito** ou **PIX**?")
+                lines.append("\nQual forma de pagamento você prefere?")
+
+                options = [
+                    "⚡ Pagar no PIX (5% off)" if not has_promo else "⚡ Pagar no PIX",
+                    "💳 Pagar no Cartão de Crédito",
+                    "📄 Boleto Bancário",
+                    "💳 Cartão de Débito",
+                ]
+                if total >= 2000.0:
+                    options.append("🔀 Pagamento Combinado")
 
                 return {
                     "reply": "\n".join(lines),
@@ -1019,22 +1076,62 @@ class AssistantAgent:
                     "products": [],
                     "active_agent": "checkout",
                     "action": None,
-                    "options": ["⚡ Pagar no PIX (5% off)", "💳 Pagar no Cartão de Crédito"],
+                    "options": options,
                     "logged_failed_intent": False,
                 }
 
-        # 9. Payment Method Choice (PIX or Card) -> Present Delivery Address and Ask if Correct
-        is_pix_choice = any(k in norm_user_msg for k in ["pagar no pix", "no pix", "pix", "chave pix", "a vista"])
-        is_card_choice = any(k in norm_user_msg for k in ["pagar no cartao", "no cartao", "cartao", "cartao de credito", "credito", "parcelado", "parcelar"])
+        # 9. Payment Method Choice (PIX, Credit Card, Boleto, Debit Card, Combined)
+        is_pix_choice = any(k in norm_user_msg for k in ["pagar no pix", "no pix", "pix", "chave pix", "a vista no pix", "opcao pix"])
+        is_boleto_choice = any(k in norm_user_msg for k in ["boleto", "boleto bancario", "pagar no boleto", "no boleto", "opcao boleto"])
+        is_debit_choice = any(k in norm_user_msg for k in ["cartao de debito", "debito", "no debito", "pagar no debito", "pagar em debito"])
+        is_combined_choice = any(k in norm_user_msg for k in ["combinado", "pagamento combinado", "pix e cartao", "pix + cartao", "combinar"])
+        is_credit_choice = (
+            not is_debit_choice
+            and not is_combined_choice
+            and any(k in norm_user_msg for k in ["cartao de credito", "credito", "cartao", "pagar no cartao", "pagar no cartao de credito", "parcelado", "parcelar", "vezes", "12x", "8x", "6x", "3x", "sem juros"])
+        )
 
+        has_payment_choice = is_pix_choice or is_credit_choice or is_boleto_choice or is_debit_choice or is_combined_choice
         clean_last_asst = re.sub(r"[*_]", "", last_assistant_msg).strip()
 
-        if (sess.get("stage") == "CHECKOUT_PAYMENT_METHOD" or "forma de pagamento" in clean_last_asst) and (is_pix_choice or is_card_choice):
-            chosen_method = "pix" if is_pix_choice else "card"
+        if (sess.get("stage") == "CHECKOUT_PAYMENT_METHOD" or "forma de pagamento" in clean_last_asst or "qual forma de pagamento" in clean_last_asst) and has_payment_choice:
+            cur_total = float(sess.get("cart_total") or 0.0)
+            max_inst = 1
+            for n in range(12, 0, -1):
+                val = cur_total / n
+                if n >= 7 and val >= 100.0:
+                    max_inst = n
+                    break
+                if 4 <= n <= 6 and val >= 80.0:
+                    max_inst = n
+                    break
+                if 2 <= n <= 3 and val >= 50.0:
+                    max_inst = n
+                    break
+                if n == 1:
+                    max_inst = 1
+                    break
+
+            if is_pix_choice:
+                chosen_method = "pix"
+                method_label = "À vista no PIX (5% de desconto)" if not sess.get("has_promo") else "À vista no PIX"
+            elif is_boleto_choice:
+                chosen_method = "boleto"
+                method_label = "Boleto Bancário à vista (compensação em até 3 dias úteis)"
+            elif is_debit_choice:
+                chosen_method = "debit_card"
+                method_label = "Cartão de Débito à vista"
+            elif is_combined_choice:
+                chosen_method = "combined"
+                method_label = "Pagamento Combinado (Entrada no PIX + Cartão de Crédito)"
+            else:
+                chosen_method = "credit_card"
+                method_label = f"Cartão de Crédito em até {max_inst}x sem juros"
+
             sess["payment_method"] = chosen_method
             sess["stage"] = "CHECKOUT_ADDRESS_CONFIRM"
 
-            method_label = "À vista no PIX (5% de desconto)" if chosen_method == "pix" else "Cartão de Crédito sem juros"
+            method_label_disp = method_label
             cust = sess.get("customer")
             if not cust and history:
                 for msg in reversed(history):
@@ -1161,11 +1258,12 @@ class AssistantAgent:
                 "🎉 **Pedido Confirmado com Sucesso!** 🎸✨\n",
                 f"Muito obrigado pela sua compra, **{cust_name}**! Seu pedido foi registrado no sistema.",
             ]
+            total = float(sess.get("cart_total") or 0.0)
+            shipping_cost = 0.0 if (is_campo_grande and (total >= 300.0 or total == 0.0)) else (25.0 if is_campo_grande else 45.0)
+
             if method == "pix":
-                total = float(sess.get("cart_total") or 0.0)
                 has_promo = bool(sess.get("has_promo", False))
                 discount_val = (total * 0.05) if not has_promo else 0.0
-                shipping_cost = 0.0 if (is_campo_grande and (total >= 300.0 or total == 0.0)) else (25.0 if is_campo_grande else 45.0)
                 total_final = (total - discount_val) + shipping_cost
                 txid = f"EMP{abs(hash(session_id)) % 1000000:06d}"
                 copia_e_cola = PixService.generate_pix_copia_e_cola(amount=total_final, txid=txid)
@@ -1179,8 +1277,66 @@ class AssistantAgent:
                     f"📲 **Acompanhamento do Pedido:**\n"
                     f"Entraremos em contato pelo seu WhatsApp (**{cust_phone or 'cadastrado'}**) assim que o pagamento for compensado para passar o status do seu pedido!"
                 )
+            elif method == "boleto":
+                total_final = total + shipping_cost
+                linha_digitavel = f"34191.79001 01043.510047 91020.150008 4 {int(total_final*100):014d}"
+                final_lines.append("\n📄 **Boleto Bancário Gerado com Sucesso!**\n")
+                final_lines.append("🔢 **Linha Digitável do Boleto:**")
+                final_lines.append(f"`{linha_digitavel}`\n")
+                final_lines.append("⏱️ **Prazo de Compensação:** Até 3 dias úteis.")
+                final_lines.append(
+                    f"\n📲 **Acompanhamento do Pedido:**\n"
+                    f"Assim que o pagamento for compensado pelo banco, entraremos em contato pelo seu WhatsApp (**{cust_phone or 'cadastrado'}**) para darmos início ao envio!"
+                )
+            elif method == "debit_card":
+                total_final = total + shipping_cost
+                final_lines.append("\n💳 **Pagamento no Cartão de Débito Aprovado com Sucesso!**")
+                final_lines.append("🔒 *Simulação autenticada com segurança sem necessidade de dados confidenciais do cartão.*")
+                final_lines.append(
+                    f"\n📲 **Acompanhamento do Pedido:**\n"
+                    f"Entraremos em contato pelo seu WhatsApp (**{cust_phone or 'cadastrado'}**) com as etapas de entrega do seu pedido!"
+                )
+            elif method == "combined":
+                total_final = total + shipping_cost
+                half_pix = total * 0.5
+                half_card = total_final - half_pix
+                txid = f"EMP{abs(hash(session_id)) % 1000000:06d}"
+                copia_e_cola = PixService.generate_pix_copia_e_cola(amount=half_pix, txid=txid)
+                amt_str = f"{half_pix:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                final_lines.append("\n🔀 **Pagamento Combinado Registrado com Sucesso:**")
+                final_lines.append(f"• **Entrada no PIX (50%):** R$ {amt_str}")
+                final_lines.append(f"• **Saldo no Cartão de Crédito (50%):** R$ {half_card:,.2f} sem juros (simulação aprovada)\n")
+                final_lines.append("📱 **QR Code PIX para a Entrada:**")
+                final_lines.append(f"![QR Code PIX](/api/pix-qrcode?amount={amt_str}&name={cust_name}&txid={txid})\n")
+                final_lines.append("📋 **Código PIX Copia e Cola:**")
+                final_lines.append(f"`{copia_e_cola}`\n")
+                final_lines.append(
+                    f"📲 **Acompanhamento do Pedido:**\n"
+                    f"Entraremos em contato pelo seu WhatsApp (**{cust_phone or 'cadastrado'}**) assim que a entrada for compensada para despachar seu pedido!"
+                )
             else:
-                final_lines.append("💳 Pagamento registrado no Cartão de Crédito sem juros.")
+                total_final = total + shipping_cost
+                max_inst = 1
+                for n in range(12, 0, -1):
+                    val = total_final / n
+                    if n >= 7 and val >= 100.0:
+                        max_inst = n
+                        break
+                    if 4 <= n <= 6 and val >= 80.0:
+                        max_inst = n
+                        break
+                    if 2 <= n <= 3 and val >= 50.0:
+                        max_inst = n
+                        break
+                    if n == 1:
+                        max_inst = 1
+                        break
+                final_lines.append(f"\n💳 **Pagamento no Cartão de Crédito Aprovado com Sucesso!** (Simulação concluída em até {max_inst}x sem juros).")
+                final_lines.append("🔒 *Por segurança e privacidade, a simulação foi autenticada sem necessidade de digitar os dados confidenciais do seu cartão.*")
+                final_lines.append(
+                    f"\n📲 **Acompanhamento do Pedido:**\n"
+                    f"Entraremos em contato pelo seu WhatsApp (**{cust_phone or 'cadastrado'}**) com a confirmação e código de rastreamento do envio!"
+                )
 
             if is_campo_grande:
                 final_lines.append(f"\n🚚 A entrega será realizada pelo nosso motoboy próprio da loja com agendamento telefônico prévio.")

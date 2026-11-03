@@ -615,6 +615,71 @@ def test_catalog_reply_anti_redundancy_excludes_tables_when_carousel_present(mul
     assert "| Modelo" not in reply
 
 
+def test_all_store_payment_options_from_policies(multi_agent_db: Path) -> None:
+    """
+    Verify Section 3 payment options are presented during checkout:
+    PIX (5% off), Cartão de Crédito sem juros, Boleto Bancário (3 dias úteis), Cartão de Débito,
+    and simulation completes safely without requesting customer card credentials.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+
+    # Pre-identified customer
+    sess_id = "test_payment_options_sec3"
+    agent.run("lucas.mendes@jmail.com", session_id=sess_id)
+
+    # 1. Close cart with items
+    res_cart = agent.run("Quero fechar meu pedido com 2x Tagima Memphis AC-39 Nylon Natural", session_id=sess_id)
+    reply = res_cart["reply"]
+
+    # Verify all Section 3 methods are displayed
+    assert "À vista no PIX" in reply
+    assert "Cartão de Crédito" in reply
+    assert "Boleto Bancário" in reply
+    assert "Cartão de Débito" in reply
+    assert "3 dias úteis" in reply
+
+    # Verify quick-reply options contain all 4 official payment methods
+    options = res_cart["options"]
+    assert any("PIX" in opt for opt in options)
+    assert any("Cartão de Crédito" in opt for opt in options)
+    assert any("Boleto Bancário" in opt for opt in options)
+    assert any("Cartão de Débito" in opt for opt in options)
+
+    # 2. Test choosing Boleto Bancário
+    sess_boleto = "test_pay_boleto"
+    agent.run("lucas.mendes@jmail.com", session_id=sess_boleto)
+    agent.run("Quero fechar meu pedido com 2x Tagima Memphis AC-39 Nylon Natural", session_id=sess_boleto)
+    res_sel_bol = agent.run("Boleto Bancário", session_id=sess_boleto)
+    assert "Boleto Bancário" in res_sel_bol["reply"]
+    assert "endereço de entrega está correto" in res_sel_bol["reply"].lower()
+
+    res_conf_addr = agent.run("Sim, endereço correto", session_id=sess_boleto)
+    assert "Boleto Bancário" in res_conf_addr["reply"]
+    assert "Prazo de Compensação" in res_conf_addr["reply"]
+
+    res_final_bol = agent.run("Sim, confirmar pedido", session_id=sess_boleto)
+    assert "Boleto Bancário Gerado com Sucesso" in res_final_bol["reply"]
+    assert "Linha Digitável" in res_final_bol["reply"]
+    assert "3 dias úteis" in res_final_bol["reply"]
+
+    # 3. Test choosing Cartão de Crédito (simulated safely without asking for card details)
+    sess_card = "test_pay_credit_card"
+    agent.run("lucas.mendes@jmail.com", session_id=sess_card)
+    agent.run("Quero fechar meu pedido com 2x Tagima Memphis AC-39 Nylon Natural", session_id=sess_card)
+    res_sel_card = agent.run("Cartão de Crédito", session_id=sess_card)
+    assert "Cartão de Crédito" in res_sel_card["reply"]
+
+    res_conf_addr_card = agent.run("Sim, endereço correto", session_id=sess_card)
+    assert "Cartão de Crédito" in res_conf_addr_card["reply"]
+    assert "não é necessário digitar os dados do seu cartão" in res_conf_addr_card["reply"].lower()
+
+    res_final_card = agent.run("Sim, confirmar pedido", session_id=sess_card)
+    assert "Cartão de Crédito Aprovado" in res_final_card["reply"]
+    # Ensure card details (number, CVV, password) were NEVER requested
+    assert "número do cartão" not in res_final_card["reply"].lower()
+    assert "cvv" not in res_final_card["reply"].lower()
+
+
 
 
 

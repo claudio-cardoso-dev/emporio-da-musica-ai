@@ -6,7 +6,7 @@
 ![Architecture](https://img.shields.io/badge/Architecture-Specialist%20Multi--Agent-6366F1)
 ![Database](https://img.shields.io/badge/Database-SQLite%20%2B%20Hybrid%20RAG-003B57?logo=sqlite&logoColor=white)
 ![APIs](https://img.shields.io/badge/Integrations-ViaCEP%20%2B%20PIX%20SVG-059669)
-![Pytest](https://img.shields.io/badge/Tests-93%20Passed-10B981?logo=pytest&logoColor=white)
+![Pytest](https://img.shields.io/badge/Tests-94%20Passed-10B981?logo=pytest&logoColor=white)
 
 > **Assistente Conversacional de E-commerce com IA & Arquitetura Multiagente Especializada**  
 > Desenvolvido para a **Empório da Música** (*"Sua música começa aqui"* — Campo Grande/MS), fundamentado em **Clean Architecture, SOLID, Function Calling Nativo, RAG Semântico Híbrido, Motor Financeiro Determinístico e Interface Conversacional Glassmorphism**.
