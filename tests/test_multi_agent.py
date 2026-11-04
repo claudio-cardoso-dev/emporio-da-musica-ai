@@ -1236,6 +1236,41 @@ def test_human_handoff_routes_to_whatsapp_regardless_of_stage(multi_agent_db: Pa
     assert "(67) 3321-4500" in r3["reply"]
 
 
+def test_excessive_installments_rejected_and_guided_to_store_max_limit(multi_agent_db: Path) -> None:
+    """
+    Ensure installment requests exceeding 12x (e.g. 15x, 18x) or exceeding the tier minimums
+    are rejected deterministically and the user is guided to valid options up to 12x.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_excessive_installments_session"
+
+    # 1. Identify customer
+    agent.run("67 99812-3456", session_id=sess_id)
+
+    # 2. Cart with Taylor 110e (R$ 5.519,08)
+    cart = [{"product_id": 1, "name": "Taylor 110e Dreadnought Natural", "price_brl": 5519.08, "qty": 4}]
+
+    # 3. Checkout and confirm address
+    agent.run("fechar meu pedido", session_id=sess_id, cart=cart)
+    agent.run("Sim, endereço correto", session_id=sess_id, cart=cart)
+
+    # 4. User requests 15x (exceeds store limit of 12x)
+    r_15 = agent.run("pagar em 15 vezes", session_id=sess_id, cart=cart)
+    assert r_15["active_agent"] == "checkout"
+    assert "Condição de Parcelamento Indisponível" in r_15["reply"] or "ultrapassa o limite máximo" in r_15["reply"]
+    assert "12x sem juros" in r_15["reply"]
+    assert "15x" in r_15["reply"]
+    # Ensure 15x was NOT accepted into final confirmation
+    assert "15x de R$" not in r_15["reply"] or "ultrapassa o limite" in r_15["reply"]
+    assert any("12x" in opt for opt in r_15["options"])
+
+    # 5. User corrects to valid 12x
+    r_12 = agent.run("12x", session_id=sess_id, cart=cart)
+    assert r_12["model_used"] == "direct_checkout_order_review"
+    assert "12x de R$" in r_12["reply"]
+
+
+
 
 
 

@@ -194,6 +194,14 @@ class AssistantAgent:
                 "language": lang,
             }
 
+        # Installment / quantity shorthand (e.g. "12x", "10x", "5x", "1x")
+        if re.search(r"^\s*\d+\s*x\s*$", stripped, re.IGNORECASE):
+            return {
+                "is_clear": True,
+                "confidence": 1.0,
+                "language": lang,
+            }
+
         # 1. Empty or ultra-short non-word noise
         if len(alnum_chars) < 2:
             return {
@@ -524,7 +532,10 @@ class AssistantAgent:
 
         sess["payment_method"] = method
         if installments is not None:
-            sess["installments"] = installments
+            safe_inst = min(max(1, int(installments)), 12)
+            if sess.get("max_inst"):
+                safe_inst = min(safe_inst, int(sess["max_inst"]))
+            sess["installments"] = safe_inst
         elif method == "credit_card" and not sess.get("installments"):
             sess["installments"] = 1
 
@@ -1868,11 +1879,89 @@ class AssistantAgent:
         if not is_order_confirmation and in_checkout_confirm_stage:
             if is_pix_select:
                 return self._build_final_order_review(sess=sess, detected_lang=detected_lang, method="pix")
-            elif inst_match:
-                chosen_n = int(inst_match.group(1))
-                return self._build_final_order_review(sess=sess, detected_lang=detected_lang, method="credit_card", installments=chosen_n)
-            elif is_single_digit_inst:
-                chosen_n = int(norm_user_msg)
+            elif inst_match or is_single_digit_inst:
+                chosen_n = int(inst_match.group(1)) if inst_match else int(norm_user_msg)
+
+                # Compute current order total and max allowed installments deterministically
+                total = float(sess.get("cart_total") or 0.0)
+                cust = sess.get("customer") or {}
+                city = cust.get("city", "Campo Grande")
+                is_campo_grande = "campo grande" in city.lower()
+                shipping_cost = 0.0 if (is_campo_grande and (total >= 300.0 or total == 0.0)) else (25.0 if is_campo_grande else 45.0)
+                total_final = total + shipping_cost
+
+                valid_insts = []
+                max_inst = 1
+                for n in range(1, 13):
+                    val = round(total_final / n, 2)
+                    if n == 1:
+                        ok = True
+                    elif 2 <= n <= 3:
+                        ok = val >= 50.0
+                    elif 4 <= n <= 6:
+                        ok = val >= 80.0
+                    else:
+                        ok = val >= 100.0
+                    if ok:
+                        max_inst = n
+                        valid_insts.append((n, val))
+
+                sess["max_inst"] = max_inst
+                sess["valid_insts"] = valid_insts
+
+                # Validate if chosen_n is within allowed limits
+                if chosen_n > 12 or chosen_n > max_inst or chosen_n < 1:
+                    def _fmt(val: float) -> str:
+                        return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+                    cust_name = cust.get("name", "Cliente")
+                    greeting = f"Olá, **{cust_name}**!" if cust_name else "Olá!"
+                    max_val = round(total_final / max_inst, 2)
+
+                    if chosen_n > 12:
+                        reason = (
+                            f"O parcelamento em **{chosen_n}x ultrapassa o limite máximo** permitido pela loja. "
+                            "Na **Empório da Música**, o parcelamento com cartão de crédito é em até **12x sem juros** "
+                            "(conforme a Seção 3 das Políticas da Loja)."
+                        )
+                    else:
+                        reason = (
+                            f"O parcelamento em **{chosen_n}x não está disponível** para este valor. "
+                            "Pelas regras da loja (Seção 3), a parcela mínima deve ser de R$ 50,00 (até 3x), R$ 80,00 (4x a 6x) e R$ 100,00 (7x a 12x)."
+                        )
+
+                    lines = [
+                        "⚠️ **Condição de Parcelamento Indisponível** 🎸💳\n",
+                        f"{greeting} {reason}\n",
+                        f"Para o valor total do seu pedido (**{_fmt(total_final)}**), o parcelamento máximo liberado é de até **{max_inst}x de {_fmt(max_val)} sem juros**.\n",
+                        "| Parcelas | Valor de cada Parcela | Total sem Juros |",
+                        "| :---: | :---: | :---: |",
+                    ]
+                    inst_options = []
+                    for n, val in valid_insts:
+                        lines.append(f"| {n}x | {_fmt(val)} | {_fmt(total_final)} |")
+                        inst_options.append(f"💳 {n}x de {_fmt(val)}")
+
+                    has_promo = bool(sess.get("has_promo", False))
+                    pix_discount = (total * 0.05) if not has_promo else 0.0
+                    inst_options.append("⚡ Pagar no PIX (5% off)" if pix_discount > 0 else "⚡ Pagar no PIX")
+
+                    lines.append(f"\nPor favor, escolha uma das opções válidas acima (de **1x até {max_inst}x sem juros**) ou opte pelo pagamento à vista no PIX com 5% de desconto:")
+
+                    sess["stage"] = "CHECKOUT_INSTALLMENT_SELECTION"
+                    return {
+                        "reply": "\n".join(lines),
+                        "language": detected_lang,
+                        "confidence": 1.0,
+                        "model_used": "direct_checkout_installments",
+                        "tools_called": [],
+                        "products": [],
+                        "active_agent": "checkout",
+                        "action": None,
+                        "options": inst_options,
+                        "logged_failed_intent": False,
+                    }
+
                 return self._build_final_order_review(sess=sess, detected_lang=detected_lang, method="credit_card", installments=chosen_n)
             elif is_card_vista_select:
                 return self._build_final_order_review(sess=sess, detected_lang=detected_lang, method="credit_card", installments=1)

@@ -6,7 +6,7 @@
 ![Architecture](https://img.shields.io/badge/Architecture-Specialist%20Multi--Agent-6366F1)
 ![Database](https://img.shields.io/badge/Database-SQLite%20%2B%20Hybrid%20RAG-003B57?logo=sqlite&logoColor=white)
 ![APIs](https://img.shields.io/badge/Integrations-ViaCEP%20%2B%20PIX%20SVG-059669)
-![Pytest](https://img.shields.io/badge/Tests-110%20Passed-10B981?logo=pytest&logoColor=white)
+![Pytest](https://img.shields.io/badge/Tests-111%20Passed-10B981?logo=pytest&logoColor=white)
 
 > **Assistente Conversacional de E-commerce com IA & Arquitetura Multiagente Especializada**  
 > Desenvolvido para a **Empório da Música** (*"Sua música começa aqui"* — Campo Grande/MS), fundamentado em **Clean Architecture, SOLID, Function Calling Nativo, RAG Semântico Híbrido, Motor Financeiro Determinístico e Interface Conversacional Glassmorphism**.
@@ -252,7 +252,7 @@ python main.py --mode cli
 
 ---
 
-## 🧪 Suíte de Testes Automatizados (110 Testes)
+## 🧪 Suíte de Testes Automatizados (111 Testes)
 
 A suíte de testes do projeto garante 100% de confiabilidade em todas as camadas da aplicação:
 - Ingestão de banco de dados e integridade referencial dos CSVs (`tests/test_ingestion_and_db.py`).
