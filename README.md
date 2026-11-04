@@ -1,5 +1,7 @@
 # 🎸 Empório da Música — AI Customer Support & Sales Agent
 
+**🌐 Languages:** [🇧🇷 Versão em Português](README.md) | [🇺🇸 English Version](README_EN.md)
+
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688?logo=fastapi&logoColor=white)
 ![Groq](https://img.shields.io/badge/LLM-Qwen3%20%2B%20Groq%20Fallbacks-F55036)
@@ -21,7 +23,7 @@ Se você é o avaliador técnico e deseja testar o sistema imediatamente, siga e
 
 ```bash
 # 1. Clone o repositório e acesse a pasta
-git clone <URL_DO_REPOSITORIO>
+git clone https://github.com/claudio-cardoso-dev/emporio-da-musica-ai.git
 cd emporio-da-musica-ai
 
 # 2. Crie e ative o ambiente virtual
@@ -198,7 +200,7 @@ flowchart TD
 
 ### 1. Clonar o repositório e instalar dependências
 ```bash
-git clone <URL_DO_REPOSITORIO>
+git clone https://github.com/claudio-cardoso-dev/emporio-da-musica-ai.git
 cd emporio-da-musica-ai
 
 # Criar e ativar ambiente virtual (recomendado)
