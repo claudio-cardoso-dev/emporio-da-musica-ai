@@ -280,6 +280,21 @@ Execution output:
 
 ---
 
+## 🤖 Use of AI Code Assistants in Development
+
+In alignment with the technical assessment guidelines, this project leveraged generative AI as a developer productivity accelerator and pair-programming partner, utilizing the **Gemini Flash** model integrated into the development workflow.
+
+### How the tool was integrated into the workflow:
+1. **Boilerplate & Initial Scaffolding:** Accelerated setup of Pydantic v2 typed schemas, SQLite DDL/migrations, and asynchronous FastAPI route handlers.
+2. **Automated Test Suite Expansion (111 Tests):** Rapid creation of test fixtures, edge-case scenarios covering all 10 store policy sections, and parameterized tests validating the deterministic installment tier engine and shipping calculations.
+3. **Refactoring & Clean Code Adherence:** Assisted in code review to ensure strict SOLID principles, decoupling deterministic financial business rules from probabilistic LLM inference.
+4. **Glassmorphism UI & Visual Components:** Supported the development of 3D flip-cards, Web Audio API instrument timbre previews, and in-memory native SVG PIX QR code rendering without heavy binary dependencies.
+5. **Technical Documentation & Bilingual Artifacts:** Structuring Mermaid architecture diagrams, multi-turn conversational logs, and bilingual project documentation (Portuguese & English).
+
+> **Engineering Note:** All architectural decisions (such as specialist multi-agent segregation, consumer protection precedence over tracking, strict 12x installment capping, and deterministic routing) were designed, governed, and verified by the engineer, ensuring complete control over software quality, security, and compliance.
+
+---
+
 ## 💬 Example Transcripts (`docs/examples/`)
 
 The repository includes 5 multi-turn conversation transcripts covering key scenarios and edge cases:
@@ -300,3 +315,4 @@ The repository includes 5 multi-turn conversation transcripts covering key scena
 - **Data Access & RAG:** SQLite 3, BM25 (`rank-bm25`), RapidFuzz, pypdf
 - **Frontend & Terminal:** Vanilla JS (Glassmorphism UI, CSS 3D Transforms, Web Audio API, SVG), Rich CLI
 - **Quality & Testing:** Pytest, AnyIO, Starlette TestClient
+

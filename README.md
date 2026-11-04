@@ -272,8 +272,23 @@ python -m pytest -v
 
 Resultado obtido:
 ```text
-====================== 109 passed, 3 warnings in 23.55s =======================
+====================== 111 passed, 3 warnings in 28.29s =======================
 ```
+
+---
+
+## 🤖 Uso de Assistentes de Código e IA Generativa no Desenvolvimento
+
+Em conformidade com as diretrizes do desafio técnico, este projeto contou com o apoio de inteligência artificial generativa como acelerador de produtividade e ferramenta de *pair programming*, utilizando o modelo **Gemini Flash** integrado ao fluxo de trabalho do desenvolvedor.
+
+### Como a ferramenta foi integrada ao processo:
+1. **Geração de Boilerplate e Estruturação Inicial:** Aceleração na criação de schemas tipados Pydantic v2, DDL e tabelas relacionais do SQLite, e endpoints assíncronos do FastAPI.
+2. **Construção da Suíte de Testes Automatizados (111 Testes):** Criação rápida de fixtures, cenários de borda (*edge cases*) para validação das 10 seções do manual de políticas da loja e testes parametrizados para o motor determinístico de parcelamento e frete.
+3. **Refatoração e Aderência a Padrões Clean Code:** Apoio na revisão de código para garantia estrita de separação de responsabilidades (SOLID), desacoplando a lógica financeira determinística das chamadas probabilísticas de LLM.
+4. **Interface Glassmorphism e Componentes Visuais:** Auxílio na estilização dos cards 3D (*flip-card* interativo), integração da Web Audio API para timbre dos instrumentos e renderização nativa de QR Code PIX em SVG sem dependências binárias externas.
+5. **Documentação Técnica e Transcrições:** Estruturação dos diagramas de arquitetura Mermaid, sumarização de fluxos conversacionais e geração de documentação bilíngue (Português e Inglês).
+
+> **Nota de Engenharia:** Todas as decisões arquiteturais (como a segregação de agentes especializados, a precedência do CDC sobre rastreio, o bloqueio de parcelamento em 12x e o roteamento determinístico) foram concebidas e validadas pelo engenheiro responsável, garantindo total controle de qualidade, segurança e conformidade do código final.
 
 ---
 
