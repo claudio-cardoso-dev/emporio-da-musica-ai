@@ -11,6 +11,7 @@ from src.agents.prompts import detect_user_language
 from src.agents.tools import TOOL_SCHEMAS, ToolExecutor, is_name_match
 from src.config.settings import settings
 from src.repositories.product_repository import normalize_text
+from src.agents.router import is_human_handoff_intent
 
 
 # Map all tool schemas by function name for clean selective scoping
@@ -894,6 +895,39 @@ class CheckoutAgent(BaseSpecialistAgent):
         Custom execute for CheckoutAgent. Automatically resolves products mentioned,
         simulates payment and shipping, and ensures user is NEVER asked to calculate totals.
         """
+        # 0. Human Attendant / Operator Handoff (WhatsApp orientation)
+        if is_human_handoff_intent(user_message):
+            cust = session_context.get("customer") if session_context else None
+            cust_name = cust.get("name") if cust else (claimed_customer_name or "")
+            greeting = f"Olá, **{cust_name}**!" if cust_name else "Olá!"
+            detected_lang = detect_user_language(user_message)
+            reply = (
+                f"{greeting} Para falar diretamente com um de nossos **atendentes, consultores musicais ou equipe de suporte**, "
+                "por favor entre em contato pelo nosso **WhatsApp oficial**: 📲🎸\n\n"
+                "• 📱 **WhatsApp:** **(67) 3321-4500**\n"
+                "• 🔗 **Link Direto:** [Clique aqui para conversar no WhatsApp](https://wa.me/556733214500)\n"
+                "• ⏰ **Horário de Atendimento:** Segunda a Sexta das 08:30 às 18:30 e Sábados das 08:30 às 13:00\n"
+                "• ⚡ **Tempo Médio de Resposta:** Menos de 5 minutos durante o horário comercial!\n\n"
+                "Se preferir continuar por aqui, estou 100% à disposição para te ajudar a escolher instrumentos, simular pagamentos, consultar frete ou rastrear seus pedidos!"
+            )
+            return {
+                "reply": reply,
+                "language": detected_lang,
+                "confidence": 1.0,
+                "model_used": "direct_human_handoff_whatsapp",
+                "tools_called": [],
+                "products": [],
+                "active_agent": "support",
+                "action": None,
+                "options": [
+                    "📲 Abrir WhatsApp: (67) 3321-4500",
+                    "🎸 Ver Catálogo",
+                    "📦 Meus Pedidos",
+                    "📍 Informações da Loja",
+                ],
+                "logged_failed_intent": False,
+            }
+
         found_items, total, has_promo = self._parse_cart_items_and_total(
             user_message=user_message,
             chat_history=chat_history,
@@ -1079,6 +1113,38 @@ class SupportAgent(BaseSpecialistAgent):
         req_tracking = track_m.group(1).upper() if track_m else None
 
         detected_lang = detect_user_language(user_message)
+
+        # 0. Human Attendant / Operator Handoff (WhatsApp orientation)
+        if is_human_handoff_intent(user_message):
+            cust_name = cust.get("name") if cust else (claimed_customer_name or "")
+            greeting = f"Olá, **{cust_name}**!" if cust_name else "Olá!"
+
+            reply = (
+                f"{greeting} Para falar diretamente com um de nossos **atendentes, consultores musicais ou equipe de suporte**, "
+                "por favor entre em contato pelo nosso **WhatsApp oficial**: 📲🎸\n\n"
+                "• 📱 **WhatsApp:** **(67) 3321-4500**\n"
+                "• 🔗 **Link Direto:** [Clique aqui para conversar no WhatsApp](https://wa.me/556733214500)\n"
+                "• ⏰ **Horário de Atendimento:** Segunda a Sexta das 08:30 às 18:30 e Sábados das 08:30 às 13:00\n"
+                "• ⚡ **Tempo Médio de Resposta:** Menos de 5 minutos durante o horário comercial!\n\n"
+                "Se preferir continuar por aqui, estou 100% à disposição para te ajudar a escolher instrumentos, simular pagamentos, consultar frete ou rastrear seus pedidos!"
+            )
+            return {
+                "reply": reply,
+                "language": detected_lang,
+                "confidence": 1.0,
+                "model_used": "direct_human_handoff_whatsapp",
+                "tools_called": [],
+                "products": [],
+                "active_agent": self.name,
+                "action": None,
+                "options": [
+                    "📲 Abrir WhatsApp: (67) 3321-4500",
+                    "🎸 Ver Catálogo",
+                    "📦 Meus Pedidos",
+                    "📍 Informações da Loja",
+                ],
+                "logged_failed_intent": False,
+            }
 
         if is_return_or_regret:
             self.tool_executor.consult_store_policies("direito de arrependimento devolucao reembolso prazo 7 dias frete")

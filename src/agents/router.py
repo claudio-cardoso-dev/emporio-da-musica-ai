@@ -174,7 +174,59 @@ SUPPORT_PATTERNS = [
     r"\bpol[íi]tica[s]?\b",
     r"\bwhatsapp\s+da\s+loja\b",
     r"\btelefone\s+da\s+loja\b",
+    # Human Attendant & Operator Handoff
+    r"\batendente[s]?\b",
+    r"\boperador(?:a|es)?\b",
+    r"\bhumano[s]?\b",
+    r"\bpessoa\b",
+    r"\b(?:falar|conversar)\s+com\s+(?:um\s+|o\s+)?atendente\b",
+    r"\b(?:falar|conversar)\s+com\s+(?:um\s+|o\s+)?operador\b",
+    r"\b(?:falar|conversar)\s+com\s+(?:um\s+|o\s+)?humano\b",
+    r"\b(?:falar|conversar)\s+com\s+(?:uma?\s+)?pessoa\b",
+    r"\b(?:falar|conversar)\s+com\s+(?:um\s+|o\s+)?vendedor\b",
+    r"\b(?:falar|conversar)\s+com\s+(?:o\s+)?gerente\b",
+    r"\b(?:falar|conversar)\s+com\s+algu[eé]m\b",
+    r"\bchamar\s+(?:um\s+|o\s+)?(?:atendente|operador|humano|vendedor|gerente)\b",
+    r"\bpassar\s+para\s+(?:um\s+|o\s+)?(?:atendente|operador|humano|vendedor)\b",
+    r"\btransfer(?:ir)?\s+(?:para\s+)?(?:um\s+|o\s+)?(?:atendente|operador|humano|vendedor)\b",
+    r"\batendimento\s+humano\b",
+    r"\bsuporte\s+humano\b",
+    r"\bcontato\s+humano\b",
+    r"\bquero\s+(?:um\s+)?atendente\b",
+    r"\bquero\s+(?:um\s+)?operador\b",
+    r"\bpreciso\s+de\s+(?:um\s+)?atendente\b",
+    r"\bpreciso\s+de\s+(?:um\s+)?operador\b",
 ]
+
+
+def is_human_handoff_intent(user_message: str) -> bool:
+    """Detect if user is trying to speak with a human attendant, operator, or sales representative."""
+    if not user_message:
+        return False
+    norm = normalize_text(user_message).lower()
+    patterns = [
+        r"\batendente[s]?\b",
+        r"\boperador(?:a|es)?\b",
+        r"\bhumano[s]?\b",
+        r"\b(?:falar|conversar)\s+com\s+(?:um\s+|o\s+)?atendente\b",
+        r"\b(?:falar|conversar)\s+com\s+(?:um\s+|o\s+)?operador\b",
+        r"\b(?:falar|conversar)\s+com\s+(?:um\s+|o\s+)?humano\b",
+        r"\b(?:falar|conversar)\s+com\s+(?:uma?\s+)?pessoa\b",
+        r"\b(?:falar|conversar)\s+com\s+(?:um\s+|o\s+)?vendedor\b",
+        r"\b(?:falar|conversar)\s+com\s+(?:o\s+)?gerente\b",
+        r"\b(?:falar|conversar)\s+com\s+algu[eé]m\b",
+        r"\bchamar\s+(?:um\s+|o\s+)?(?:atendente|operador|humano|vendedor|gerente)\b",
+        r"\bpassar\s+para\s+(?:um\s+|o\s+)?(?:atendente|operador|humano|vendedor)\b",
+        r"\btransfer(?:ir)?\s+(?:para\s+)?(?:um\s+|o\s+)?(?:atendente|operador|humano|vendedor)\b",
+        r"\batendimento\s+humano\b",
+        r"\bsuporte\s+humano\b",
+        r"\bcontato\s+humano\b",
+        r"\bquero\s+(?:um\s+)?atendente\b",
+        r"\bquero\s+(?:um\s+)?operador\b",
+        r"\bpreciso\s+de\s+(?:um\s+)?atendente\b",
+        r"\bpreciso\s+de\s+(?:um\s+)?operador\b",
+    ]
+    return any(re.search(pat, norm) for pat in patterns)
 
 
 class IntentRouter:
@@ -186,6 +238,10 @@ class IntentRouter:
     @staticmethod
     def detect_explicit_intent(norm_msg: str) -> Optional[str]:
         """Detect explicit intent from user message keywords."""
+        # 0. Human Attendant / Operator Handoff check (always prioritizes human contact)
+        if is_human_handoff_intent(norm_msg):
+            return "support"
+
         # 1. Checkout intent check (takes precedence when user explicitly wants to pay/close order)
         for pat in CHECKOUT_PATTERNS:
             if re.search(pat, norm_msg):

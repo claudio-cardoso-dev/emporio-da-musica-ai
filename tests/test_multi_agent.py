@@ -1201,6 +1201,42 @@ def test_support_return_and_regret_policy_not_intercepted_by_order_tracking(mult
     assert "Pedido #4" in r3["reply"]
 
 
+def test_human_handoff_routes_to_whatsapp_regardless_of_stage(multi_agent_db: Path) -> None:
+    """
+    Ensure that whenever the user attempts to speak with an attendant, operator, or human,
+    the system reliably guides them to contact via WhatsApp, regardless of current cart or stage.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+
+    # 1. Unidentified session
+    sess_1 = "test_handoff_unidentified"
+    r1 = agent.run("quero falar com atendente", session_id=sess_1)
+    assert r1["active_agent"] == "support"
+    assert r1["model_used"] == "direct_human_handoff_whatsapp"
+    assert "(67) 3321-4500" in r1["reply"]
+    assert "https://wa.me/556733214500" in r1["reply"]
+
+    # 2. In the middle of checkout / with items in cart
+    sess_2 = "test_handoff_checkout"
+    cart = [{"product_id": 1, "name": "Violão Giannini", "price_brl": 439.20, "qty": 1}]
+    r2 = agent.run("quero falar com operador", session_id=sess_2, cart=cart)
+    assert r2["active_agent"] == "support"
+    assert r2["model_used"] == "direct_human_handoff_whatsapp"
+    assert "(67) 3321-4500" in r2["reply"]
+    # Ensure it did NOT output the checkout calculation table
+    assert "Vamos fechar seu pedido com o cálculo detalhado" not in r2["reply"]
+
+    # 3. Authenticated customer
+    sess_3 = "test_handoff_authenticated"
+    agent.run("67 99812-3456", session_id=sess_3)
+    r3 = agent.run("falar com atendente", session_id=sess_3)
+    assert r3["active_agent"] == "support"
+    assert r3["model_used"] == "direct_human_handoff_whatsapp"
+    assert "Lucas Mendes da Silva" in r3["reply"]
+    assert "(67) 3321-4500" in r3["reply"]
+
+
+
 
 
 

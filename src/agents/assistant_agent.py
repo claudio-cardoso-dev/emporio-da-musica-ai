@@ -12,7 +12,7 @@ from src.agents.prompts import (
     SYSTEM_PROMPT,
     detect_user_language,
 )
-from src.agents.router import IntentRouter
+from src.agents.router import IntentRouter, is_human_handoff_intent
 from src.agents.specialists import (
     CatalogAgent,
     CheckoutAgent,
@@ -782,6 +782,39 @@ class AssistantAgent:
             if msg.get("role") == "assistant":
                 last_assistant_msg = normalize_text(msg.get("content") or "")
                 break
+
+        # 1.5. Human Handoff Intent (Attendant / Operator / Human Support)
+        if is_human_handoff_intent(norm_user_msg):
+            cust = sess.get("customer") or {}
+            cust_name = cust.get("name") or claimed_name or ""
+            greeting = f"Olá, **{cust_name}**!" if cust_name else "Olá!"
+
+            reply = (
+                f"{greeting} Para falar diretamente com um de nossos **atendentes, consultores musicais ou equipe de suporte**, "
+                "por favor entre em contato pelo nosso **WhatsApp oficial**: 📲🎸\n\n"
+                "• 📱 **WhatsApp:** **(67) 3321-4500**\n"
+                "• 🔗 **Link Direto:** [Clique aqui para conversar no WhatsApp](https://wa.me/556733214500)\n"
+                "• ⏰ **Horário de Atendimento:** Segunda a Sexta das 08:30 às 18:30 e Sábados das 08:30 às 13:00\n"
+                "• ⚡ **Tempo Médio de Resposta:** Menos de 5 minutos durante o horário comercial!\n\n"
+                "Se preferir continuar por aqui, estou 100% à disposição para te ajudar a escolher instrumentos, simular pagamentos, consultar frete ou rastrear seus pedidos!"
+            )
+            return {
+                "reply": reply,
+                "language": detected_lang,
+                "confidence": 1.0,
+                "model_used": "direct_human_handoff_whatsapp",
+                "tools_called": [],
+                "products": [],
+                "active_agent": "support",
+                "action": None,
+                "options": [
+                    "📲 Abrir WhatsApp: (67) 3321-4500",
+                    "🎸 Ver Catálogo",
+                    "📦 Meus Pedidos",
+                    "📍 Informações da Loja",
+                ],
+                "logged_failed_intent": False,
+            }
 
         # 2. Direct Interface Form Submissions
         # 2.1. Registration Form Submission (Step 1)
