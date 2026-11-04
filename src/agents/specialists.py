@@ -357,7 +357,7 @@ class BaseSpecialistAgent:
                     # Catalog Guardrail: If catalog agent generated text without tool calls
                     # but the user asked about instruments or categories, execute search_instruments
                     # to prevent hallucination (e.g. fake brands) and guarantee carousel display!
-                    if self.name == "catalog" and not collected_products:
+                    if self.name == "catalog" and not collected_products and not tools_called_log:
                         norm_u = normalize_text(user_message)
                         cat_found = None
                         for c_name, aliases in [
@@ -399,55 +399,77 @@ class BaseSpecialistAgent:
                         ])
 
                         if not is_order_inquiry and (cat_found or brand_found or max_p is not None or only_promo or any(w in norm_u for w in catalog_keywords)):
-                            forced_args = {
-                                "category_query": cat_found,
-                                "query": brand_found,
-                                "max_price": max_p,
-                                "only_available": True,
-                                "only_on_promotion": only_promo,
-                                "limit": 60,
-                            }
-                            tool_output = self.tool_executor.execute("search_instruments", forced_args)
-                            tools_called_log.append({"tool": "search_instruments", "arguments": forced_args})
+                            clean_q = re.sub(
+                                r"\b(tem|voces|temos|vende|vendem|quero|ver|olhar|me|mande|mostre|as|os|opcoes|opcao|de|em|estoque|disponivel|disponiveis|favor|por|catalogo|produto|produtos)\b",
+                                "", norm_u
+                            ).strip()
+                            clean_q = re.sub(r"\s+", " ", clean_q).strip()
 
-                            if isinstance(tool_output, dict) and "products" in tool_output:
-                                for prod in tool_output["products"]:
-                                    if prod.get("status") == "active" and int(prod.get("stock_quantity", 0)) > 0:
-                                        collected_products[int(prod["product_id"])] = prod
+                            if cat_found or brand_found or max_p is not None or only_promo:
+                                forced_args = {
+                                    "category_query": cat_found,
+                                    "query": brand_found or (clean_q if len(clean_q) >= 3 else None),
+                                    "max_price": max_p,
+                                    "only_available": True,
+                                    "only_on_promotion": only_promo,
+                                    "limit": 60,
+                                }
+                            elif clean_q and len(clean_q) >= 3:
+                                forced_args = {
+                                    "query": clean_q,
+                                    "only_available": True,
+                                    "limit": 60,
+                                }
+                            elif any(w in norm_u for w in ["catalogo", "todos", "destaques", "instrumentos"]):
+                                forced_args = {
+                                    "only_available": True,
+                                    "limit": 60,
+                                }
+                            else:
+                                forced_args = None
 
-                            # Provide real catalog items to LLM to write authentic summary
-                            llm_payload = make_llm_tool_payload("search_instruments", tool_output)
-                            messages.append(
-                                {
-                                    "role": "assistant",
-                                    "content": None,
-                                    "tool_calls": [
+                            if forced_args:
+                                tool_output = self.tool_executor.execute("search_instruments", forced_args)
+                                tools_called_log.append({"tool": "search_instruments", "arguments": forced_args})
+
+                                if isinstance(tool_output, dict) and "products" in tool_output and tool_output["products"]:
+                                    for prod in tool_output["products"]:
+                                        if prod.get("status") == "active" and int(prod.get("stock_quantity", 0)) > 0:
+                                            collected_products[int(prod["product_id"])] = prod
+
+                                    # Provide real catalog items to LLM to write authentic summary
+                                    llm_payload = make_llm_tool_payload("search_instruments", tool_output)
+                                    messages.append(
                                         {
-                                            "id": "call_forced_catalog_01",
-                                            "type": "function",
-                                            "function": {
-                                                "name": "search_instruments",
-                                                "arguments": json.dumps(forced_args),
-                                            },
+                                            "role": "assistant",
+                                            "content": None,
+                                            "tool_calls": [
+                                                {
+                                                    "id": "call_forced_catalog_01",
+                                                    "type": "function",
+                                                    "function": {
+                                                        "name": "search_instruments",
+                                                        "arguments": json.dumps(forced_args),
+                                                    },
+                                                }
+                                            ],
                                         }
-                                    ],
-                                }
-                            )
-                            messages.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": "call_forced_catalog_01",
-                                    "name": "search_instruments",
-                                    "content": json.dumps(llm_payload, ensure_ascii=False),
-                                }
-                            )
-                            response, model_used = self._call_llm_with_fallbacks(
-                                messages=messages,
-                                tools=None,
-                                temperature=settings.llm_temperature,
-                            )
-                            choice_msg = response.choices[0].message
-                            final_text = clean_thinking_tags(choice_msg.content or "")
+                                    )
+                                    messages.append(
+                                        {
+                                            "role": "tool",
+                                            "tool_call_id": "call_forced_catalog_01",
+                                            "name": "search_instruments",
+                                            "content": json.dumps(llm_payload, ensure_ascii=False),
+                                        }
+                                    )
+                                    response, model_used = self._call_llm_with_fallbacks(
+                                        messages=messages,
+                                        tools=None,
+                                        temperature=settings.llm_temperature,
+                                    )
+                                    choice_msg = response.choices[0].message
+                                    final_text = clean_thinking_tags(choice_msg.content or "")
 
                     options_to_offer = []
                     if "novo cliente" in final_text.lower():
@@ -600,21 +622,50 @@ class BaseSpecialistAgent:
                 ]
 
                 if cat_found or brand_found or max_p is not None or only_promo or any(w in norm_u for w in catalog_keywords):
-                    forced_args = {
-                        "category_query": cat_found,
-                        "query": brand_found,
-                        "max_price": max_p,
-                        "only_available": True,
-                        "only_on_promotion": only_promo,
-                    }
-                    try:
-                        tool_output = self.tool_executor.execute("search_instruments", forced_args)
-                        if isinstance(tool_output, dict) and "products" in tool_output:
-                            for prod in tool_output["products"]:
-                                if prod.get("status") == "active" and int(prod.get("stock_quantity", 0)) > 0:
-                                    collected_products[int(prod["product_id"])] = prod
-                    except Exception:
-                        pass
+                    clean_q = re.sub(
+                        r"\b(tem|voces|voce|temos|vende|vendem|quero|ver|olhar|me|mande|mostre|as|os|opcoes|opcao|opção|opções|de|em|estoque|disponivel|disponiveis|disponível|disponíveis|favor|por|catalogo|catálogo|produto|produtos|quais|qual|algum|alguma|alguns|algumas|todos|todas|tudo|linha|linhas|tipo|tipos|lista|mostrar|exibir|conferir|buscar|procurar)\b",
+                        "", norm_u, flags=re.IGNORECASE
+                    ).strip()
+                    clean_q = re.sub(r"\s+", " ", clean_q).strip()
+
+                    clean_model = re.sub(r"\b(ate|até|r\$|reais|real|\d+)\b", "", clean_q, flags=re.IGNORECASE)
+                    clean_model = re.sub(r"\b(violao|violoes|violão|violões|guitarra|guitarras|baixo|baixos|bateria|baterias|teclado|teclados|piano|pianos|ukulele|ukuleles|sopro|metais|madeiras|cordas)\b", "", clean_model, flags=re.IGNORECASE)
+                    clean_model = re.sub(r"\s+", " ", clean_model).strip()
+
+                    model_query = brand_found or (clean_model if len(clean_model) >= 3 else None)
+
+                    if cat_found or brand_found or max_p is not None or only_promo:
+                        forced_args = {
+                            "category_query": cat_found,
+                            "query": model_query,
+                            "max_price": max_p,
+                            "only_available": True,
+                            "only_on_promotion": only_promo,
+                            "limit": 60,
+                        }
+                    elif clean_q and len(clean_q) >= 3:
+                        forced_args = {
+                            "query": clean_q,
+                            "only_available": True,
+                            "limit": 60,
+                        }
+                    elif any(w in norm_u for w in ["catalogo", "todos", "destaques", "instrumentos"]):
+                        forced_args = {
+                            "only_available": True,
+                            "limit": 60,
+                        }
+                    else:
+                        forced_args = None
+
+                    if forced_args:
+                        try:
+                            tool_output = self.tool_executor.execute("search_instruments", forced_args)
+                            if isinstance(tool_output, dict) and "products" in tool_output:
+                                for prod in tool_output["products"]:
+                                    if prod.get("status") == "active" and int(prod.get("stock_quantity", 0)) > 0:
+                                        collected_products[int(prod["product_id"])] = prod
+                        except Exception:
+                            pass
 
             prods = [p for p in collected_products.values() if p.get("status") == "active" and int(p.get("stock_quantity", 0)) > 0] if self.name == "catalog" else []
             if prods:
@@ -993,6 +1044,194 @@ class SupportAgent(BaseSpecialistAgent):
         queries orders deterministically and returns active orders or states clearly if none exist.
         """
         norm_msg = normalize_text(user_message).lower()
+
+        # 1. Store Policies & Post-sale Rights (Return, Regret, Exchange, Defect, Warranty, Store Info)
+        is_return_or_regret = any(k in norm_msg for k in [
+            "arrependi", "arrependimento", "arrepender", "devolver", "devolucao", "devolucoes",
+            "devolvo", "posso devolver", "como devolver", "quero devolver", "direito de arrependimento",
+            "direito de devolucao", "reembolso", "estorno", "cancelar compra", "cancelar pedido",
+            "cancelamento", "desistir", "desistencia"
+        ])
+
+        is_exchange_or_defect = any(k in norm_msg for k in [
+            "defeito", "quebrado", "danificado", "veio com defeito", "garantia", "garantia legal",
+            "troca por defeito", "posso trocar", "como trocar", "quero trocar", "trocar produto",
+            "trocar pedido", "troca por preferencia", "trocar modelo", "troca", "trocas", "trocar"
+        ])
+
+        is_store_info = any(k in norm_msg for k in [
+            "horario de funcionamento", "horario da loja", "horario de atendimento",
+            "onde fica a loja", "endereco da loja", "qual o endereco",
+            "telefone da loja", "whatsapp da loja", "qual o telefone", "qual o whatsapp",
+            "cnpj", "sobre a loja", "localizacao da loja"
+        ])
+
+        is_general_policy = any(k in norm_msg for k in [
+            "politica", "politicas", "regras da loja", "manual da loja"
+        ])
+
+        cust = session_context.get("customer") if session_context else None
+
+        # Check if user message provided an explicit order ID or tracking code
+        order_id_m = re.search(r"(?:pedido|ordem|numero|n[ºo°]|#)\s*#?\s*(\d+)", user_message, re.IGNORECASE)
+        req_order_id = int(order_id_m.group(1)) if order_id_m else None
+        track_m = re.search(r"\b(BR[A-Z0-9]{9}BR)\b", user_message, re.IGNORECASE)
+        req_tracking = track_m.group(1).upper() if track_m else None
+
+        detected_lang = detect_user_language(user_message)
+
+        if is_return_or_regret:
+            self.tool_executor.consult_store_policies("direito de arrependimento devolucao reembolso prazo 7 dias frete")
+            tools_called_log = [{"tool": "consult_store_policies", "arguments": {"query": user_message}}]
+            cust_name = cust.get("name") if cust else (claimed_customer_name or "")
+            greeting = f"Olá, **{cust_name}**!" if cust_name else "Olá!"
+
+            cust_orders = []
+            if cust:
+                cust_identifier = cust.get("phone") or cust.get("email") or str(cust.get("customer_id"))
+                order_check = self.tool_executor.check_order_status(
+                    order_id=req_order_id,
+                    tracking_code=req_tracking,
+                    customer_identifier=cust_identifier,
+                    customer_name=cust_name or "Cliente",
+                )
+                cust_orders = order_check.get("orders") or []
+
+            lines = [
+                f"{greeting} Sim, com certeza você pode solicitar a devolução do seu pedido! Na **Empório da Música**, seguimos com total rigor as diretrizes do **Código de Defesa do Consumidor (CDC)** e oferecemos condições claras para trocas e devoluções: 🎸📦\n",
+                "📋 **Política de Devolução por Direito de Arrependimento (Seção 4.1):**",
+                "• **Prazo Legal:** Você pode solicitar a devolução em até **7 (sete) dias corridos** após o recebimento do produto, sem necessidade de qualquer justificativa.",
+                "• **Frete de Devolução 100% Gratuito:** O frete de devolução é **integralmente por conta da loja**. Para Campo Grande/MS, agendamos a coleta com nosso motoboy próprio; para outras cidades, fornecemos a etiqueta de logística reversa dos Correios.",
+                "• **Condições do Produto:** O instrumento deve estar em sua **embalagem original**, sem sinais de uso, acompanhado de todos os manuais, nota fiscal e acessórios.",
+                "• **Reembolso Integral:** O reembolso será realizado na mesma forma de pagamento original em até **10 dias úteis** após a chegada e conferência do produto em nossa loja.\n",
+                "⚠️ **Itens Não Elegíveis para Devolução ou Troca (Seção 4.4):**",
+                "• Instrumentos com personalização ou ajustes sob encomenda (setup, regulagem especial).",
+                "• Produtos adquiridos em promoções de liquidação com aviso explícito de *'venda final'*.",
+                "• Boquilhas de instrumentos de sopro (por questões de higiene e saúde pública).\n",
+            ]
+
+            if cust_orders:
+                recent_order = cust_orders[0]
+                oid = recent_order.get("order_id")
+                items = recent_order.get("items") or []
+                items_desc = ", ".join(f"{it.get('product_name') or 'Item'}" for it in items) if items else "instrumento"
+                lines.append(f"📦 Identificamos o seu **Pedido #{oid}** (*{items_desc}*). Caso deseje devolver este item, nossa equipe já está à disposição para emitir a sua etiqueta reversa!\n")
+
+            lines.append(
+                "💬 **Como solicitar a devolução:**\n"
+                "Você pode nos confirmar por aqui ou entrar em contato direto pelo nosso WhatsApp oficial: **(67) 3321-4500** informando o número do seu pedido para gerarmos o código de postagem reversa sem custo!"
+            )
+
+            return {
+                "reply": "\n".join(lines).strip(),
+                "language": detected_lang,
+                "confidence": 1.0,
+                "model_used": "direct_store_policy",
+                "tools_called": tools_called_log,
+                "products": [],
+                "active_agent": self.name,
+                "action": None,
+                "options": ["Falar no WhatsApp: (67) 3321-4500", "📦 Status do Pedido", "📍 Informações da Loja", "🎸 Ver Produtos em Promoção"],
+                "logged_failed_intent": False,
+            }
+
+        elif is_exchange_or_defect:
+            self.tool_executor.consult_store_policies("trocas defeito de fabricacao garantia legal cdc")
+            tools_called_log = [{"tool": "consult_store_policies", "arguments": {"query": user_message}}]
+            cust_name = cust.get("name") if cust else (claimed_customer_name or "")
+            greeting = f"Olá, **{cust_name}**!" if cust_name else "Olá!"
+
+            lines = [
+                f"{greeting} Seguem as diretrizes oficiais da **Empório da Música** para trocas, defeitos e garantia: 🎸🛠️\n",
+                "🔧 **Trocas por Defeito de Fabricação (Seção 4.2):**",
+                "• **Prazo na Loja:** Produtos com defeito de fabricação podem ser trocados diretamente com a nossa loja em até **30 (trinta) dias corridos** após a compra.",
+                "• **Após 30 dias:** O cliente aciona a garantia do fabricante. A Empório da Música faz a intermediação de todo o processo mediante solicitação.",
+                "• **O que não cobre:** Danos causados por mau uso, quedas, exposição a umidade excessiva ou modificações/reparos não autorizados.\n",
+                "🎨 **Trocas por Preferência (Seção 4.3):**",
+                "• Permitidas em até **7 dias corridos** (cor, modelo ou tamanho), mediante disponibilidade em estoque.",
+                "• O produto deve estar em perfeito estado e na embalagem original lacrada. Diferenças de valor serão cobradas ou reembolsadas.\n",
+                "🛡️ **Garantia Legal e Fabricante (Seção 8):**",
+                "• **Garantia Legal:** 90 dias conforme o Código de Defesa do Consumidor (CDC).",
+                "• **Garantia do Fabricante:** De 6 meses a 2 anos, conforme o certificado que acompanha cada instrumento.",
+                "• Desgaste natural de cordas, trastes e palhetas não é coberto por garantia de fábrica.\n",
+                "💬 **Como acionar a garantia ou solicitar troca:**\n"
+                "Traga o instrumento com a nota fiscal em nossa loja na **Rua 14 de Maio, 3200 — Centro, Campo Grande/MS** ou nos envie fotos/vídeos pelo WhatsApp **(67) 3321-4500**!"
+            ]
+
+            return {
+                "reply": "\n".join(lines).strip(),
+                "language": detected_lang,
+                "confidence": 1.0,
+                "model_used": "direct_store_policy",
+                "tools_called": tools_called_log,
+                "products": [],
+                "active_agent": self.name,
+                "action": None,
+                "options": ["Falar no WhatsApp: (67) 3321-4500", "📍 Informações da Loja", "🎸 Ver Produtos em Promoção"],
+                "logged_failed_intent": False,
+            }
+
+        elif is_store_info:
+            self.tool_executor.consult_store_policies("endereco loja fisica horario funcionamento telefone whatsapp cnpj")
+            tools_called_log = [{"tool": "consult_store_policies", "arguments": {"query": user_message}}]
+            cust_name = cust.get("name") if cust else (claimed_customer_name or "")
+            greeting = f"Olá, **{cust_name}**!" if cust_name else "Olá!"
+
+            lines = [
+                f"{greeting} Aqui estão as informações oficiais de atendimento da **Empório da Música**: 🎸📍\n",
+                "📍 **Endereço da Loja Física:**",
+                "• Rua 14 de Maio, 3200 — Centro, Campo Grande/MS (CEP: 79202-333)",
+                "• CNPJ: 12.345.678/0001-90\n",
+                "⏰ **Horário de Funcionamento (Seção 2):**",
+                "• **Segunda a Sexta-feira:** 08:30 às 18:30 (ininterrupto)",
+                "• **Sábados:** 08:30 às 13:00",
+                "• **Domingos e Feriados:** Fechado\n",
+                "📞 **Canais de Contato:**",
+                "• **WhatsApp / Telefone:** (67) 3321-4500",
+                "• **E-mail:** contato@emporiodamusica.com.br\n",
+                "Como podemos te ajudar hoje? Fique à vontade para tirar dúvidas ou conhecer nossos instrumentos!"
+            ]
+
+            return {
+                "reply": "\n".join(lines).strip(),
+                "language": detected_lang,
+                "confidence": 1.0,
+                "model_used": "direct_store_policy",
+                "tools_called": tools_called_log,
+                "products": [],
+                "active_agent": self.name,
+                "action": None,
+                "options": ["🎸 Violões até R$1000", "🌴 Ver Ukuleles", "🔥 Produtos em Promoção", "📦 Status do Pedido"],
+                "logged_failed_intent": False,
+            }
+
+        elif is_general_policy:
+            policy_res = self.tool_executor.consult_store_policies(user_message)
+            tools_called_log = [{"tool": "consult_store_policies", "arguments": {"query": user_message}}]
+            matched = policy_res.get("matched_sections") or []
+            if matched:
+                top_sec = matched[0]
+                sec_title = top_sec.get("section_title", "Políticas da Loja")
+                sec_content = top_sec.get("content", "")
+                reply = (
+                    f"Consultei o manual oficial de políticas da **Empório da Música** sobre sua dúvida: 📖🎸\n\n"
+                    f"📌 **{sec_title}**\n\n{sec_content}\n\n"
+                    "Se precisar de mais detalhes ou quiser falar com um atendente humano, nosso WhatsApp é **(67) 3321-4500**!"
+                )
+                return {
+                    "reply": reply,
+                    "language": detected_lang,
+                    "confidence": 1.0,
+                    "model_used": "direct_store_policy",
+                    "tools_called": tools_called_log,
+                    "products": [],
+                    "active_agent": self.name,
+                    "action": None,
+                    "options": ["Falar no WhatsApp: (67) 3321-4500", "📍 Informações da Loja", "🎸 Ver Catálogo"],
+                    "logged_failed_intent": False,
+                }
+
+        # 2. Order Tracking & Status
         is_tracking_intent = any(k in norm_msg for k in [
             "rastreio", "rastrear", "rastreamento", "status do pedido", "status de pedido",
             "status dos pedidos", "status da entrega", "status das entregas",
@@ -1007,16 +1246,7 @@ class SupportAgent(BaseSpecialistAgent):
             "quando chega", "previsao de entrega", "pedidos"
         ]) or norm_msg in ("pedidos", "meus pedidos", "compras", "rastreio", "meu rastreio")
 
-        cust = session_context.get("customer") if session_context else None
-
-        # Check if user message provided an explicit order ID or tracking code
-        order_id_m = re.search(r"(?:pedido|ordem|numero|n[ºo°]|#)\s*#?\s*(\d+)", user_message, re.IGNORECASE)
-        req_order_id = int(order_id_m.group(1)) if order_id_m else None
-        track_m = re.search(r"\b(BR[A-Z0-9]{9}BR)\b", user_message, re.IGNORECASE)
-        req_tracking = track_m.group(1).upper() if track_m else None
-
         if is_tracking_intent or req_order_id or req_tracking:
-            detected_lang = detect_user_language(user_message)
             if cust:
                 cust_name = cust.get("name") or claimed_customer_name or "Cliente"
                 cust_identifier = cust.get("phone") or cust.get("email") or str(cust.get("customer_id"))

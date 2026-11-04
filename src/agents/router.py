@@ -36,7 +36,13 @@ CATALOG_PATTERNS = [
     r"\bpromo[çc][ãa]o\b", r"\bpromo[çc][õo]es\b", r"\bem\s+promo[çc][ãa]o\b",
     r"\bestoque\b", r"\bdispon[íi]ve(?:l|is)\b",
     r"\btem\s+(?:em\s+estoque|dispon[íi]vel)\b",
+    r"\btem\b(?!\s+(?:c[óo]digo|rastreio|pedido))",
     r"\bvoc[eê]s?\s+t[eê]m\b",
+    r"\bvende[m]?\b",
+    r"\bprocurando\b",
+    r"\bbuscando\b",
+    r"\bpandeiro[s]?\b",
+    r"\bcavaquinho[s]?\b",
     r"\bquero\s+ver\b(?!\s+(?:meus?\s+)?(?:pedidos?|compras?|rastreio|carrinho|cadastro|endere[çc]o|dados|termos))",
     r"\bquero\s+olhar\b(?!\s+(?:meus?\s+)?(?:pedidos?|compras?|rastreio|carrinho|cadastro|endere[çc]o|dados|termos))",
     r"\bver\s+ukuleles\b",
@@ -151,15 +157,21 @@ SUPPORT_PATTERNS = [
     # Store Policies, Returns & Customer Service
     r"\btroca(?:r)?\b",
     r"\bdevolu[çc][ãa]o\b", r"\bdevolver\b",
+    r"\bposso\s+devolver\b", r"\bcomo\s+devolver\b", r"\bquero\s+devolver\b",
+    r"\bposso\s+trocar\b", r"\bcomo\s+trocar\b", r"\bquero\s+trocar\b",
     r"\bgarantia\b",
     r"\bdefeito\b",
-    r"\barrependimento\b",
-    r"\bcancelar\s+pedido\b",
+    r"\barrepend(?:i|er|eu|imento)\b",
+    r"\breembolso\b",
+    r"\bestorno\b",
+    r"\bcancelar\s+(?:o\s+|meu\s+)?pedido\b",
+    r"\bcancelar\s+(?:a\s+|minha\s+)?compra\b",
+    r"\bcancelamento\b",
     r"\bhor[áa]rio\s+(?:de\s+funcionamento|da\s+loja)?\b",
     r"\bendere[çc]o\s+(?:f[íi]sico|da\s+loja)\b",
     r"\bonde\s+fica\s+(?:a\s+loja)?\b",
     r"\bcnpj\b",
-    r"\bpol[íi]tica\b",
+    r"\bpol[íi]tica[s]?\b",
     r"\bwhatsapp\s+da\s+loja\b",
     r"\btelefone\s+da\s+loja\b",
 ]
@@ -271,7 +283,18 @@ class IntentRouter:
 
             # E. Customer Registration Continuation:
             if last_agent == "customer":
-                return "customer"
+                is_onboarding_pending = any(
+                    k in last_assistant_msg for k in [
+                        "formulario", "preencha", "cadastro", "cep", "endereco", "termo",
+                        "consentimento", "dados", "novo cliente", "tentar novamente"
+                    ]
+                ) and not any(
+                    k in last_assistant_msg for k in [
+                        "como posso te ajudar", "identificamos seu cadastro", "cadastro e endereco de entrega realizados com sucesso"
+                    ]
+                )
+                if is_onboarding_pending:
+                    return "customer"
 
             # F. Support Continuation:
             if last_agent == "support" and len(norm_msg.split()) <= 5:

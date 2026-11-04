@@ -476,11 +476,18 @@ def test_complete_customer_journey_flow_end_to_end(multi_agent_db: Path) -> None
     assert "Sim, confirmar pedido" in res8["options"]
     assert "Não, alterar pagamento" in res8["options"]
 
-    # Step 10: User confirms order -> Concluded with success
+    # Step 10: User confirms order -> Concluded with success, asks CSAT 1 to 5
     res9 = agent.run("Sim, confirmar pedido", session_id=sess_id)
     assert "Pedido Confirmado com Sucesso" in res9["reply"]
     assert "Fernanda Lima" in res9["reply"]
-    assert "🔄 Novo Atendimento" in res9["options"]
+    assert any("⭐ 1" in opt for opt in res9["options"])
+    assert any("⭐ 5" in opt for opt in res9["options"])
+
+    # Step 11: User provides rating -> Closed with thanks
+    res10 = agent.run("5", session_id=sess_id)
+    assert "Agradecemos muito pela sua avaliação" in res10["reply"]
+    assert res10["action"] == "CLOSE_CHAT"
+    assert "🔄 Novo Atendimento" in res10["options"]
 
 
 def test_identification_cannot_be_bypassed_with_greetings_or_catalog_queries(multi_agent_db: Path) -> None:
@@ -1083,6 +1090,118 @@ def test_catalog_query_price_limit_2000_returns_all_products_not_truncated_to_15
 
     max_price = max(p["effective_price_brl"] for p in products)
     assert max_price > 1800.0, f"Expected max price close to 2000, got {max_price}"
+
+
+def test_catalog_pandeiro_query_returns_no_products_and_no_carousel(multi_agent_db: Path) -> None:
+    """
+    Verify that querying for instruments not sold by the store (e.g. pandeiro):
+    1. Routes correctly to catalog specialist (or explains non-availability) without trapping in customer onboarding.
+    2. Does NOT return unrelated products or populate the carousel.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_catalog_pandeiro"
+
+    # Pre-identify customer using seed customer phone
+    agent.run("6799123-0123", session_id=sess_id)
+
+    # First turn: tem pandeiro?
+    res1 = agent.run("tem pandeiro?", session_id=sess_id)
+    assert res1["active_agent"] == "catalog"
+    assert len(res1.get("products", [])) == 0
+
+    # Second turn: me mande as opções de pandeiro
+    res2 = agent.run("me mande as opções de pandeiro", session_id=sess_id)
+    assert res2["active_agent"] == "catalog"
+    assert len(res2.get("products", [])) == 0
+
+
+def test_satisfaction_survey_and_attendance_closure_flow(multi_agent_db: Path) -> None:
+    """
+    Verify complete post-checkout satisfaction survey (CSAT 1-5) and attendance closure:
+    1. After order confirmation, system asks for CSAT rating from 1 to 5.
+    2. Interactive options provide 1-5 star rating buttons.
+    3. User provides rating response.
+    4. System registers score, thanks user, and concludes/closes attendance.
+    5. Follow-up messages in closed state politely inform attendance was concluded.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_csat_survey_closure"
+
+    # Step 1: Identify customer
+    agent.run("6799123-0123", session_id=sess_id)
+
+    # Step 2: Add item to cart
+    agent.run("adicionar 1 Yamaha F310 ao carrinho", session_id=sess_id)
+
+    # Step 3: Checkout intent
+    agent.run("fechar meu pedido", session_id=sess_id)
+
+    # Step 4: Confirm address
+    agent.run("Sim, endereço correto", session_id=sess_id)
+
+    # Step 5: Choose PIX
+    agent.run("⚡ Pagar no PIX (5% off)", session_id=sess_id)
+
+    # Step 6: Confirm final order
+    res_confirm = agent.run("Sim, confirmar pedido", session_id=sess_id)
+    assert "Pedido Confirmado com Sucesso" in res_confirm["reply"]
+    assert "Pesquisa de Satisfação" in res_confirm["reply"]
+    assert "1 a 5" in res_confirm["reply"]
+    assert any("⭐ 5" in opt for opt in res_confirm["options"])
+    assert any("⭐ 1" in opt for opt in res_confirm["options"])
+
+    # Step 7: User provides CSAT rating
+    res_csat = agent.run("⭐ 5 (Excelente)", session_id=sess_id)
+    assert res_csat["model_used"] == "direct_csat_closure"
+    assert "Agradecemos muito pela sua avaliação" in res_csat["reply"]
+    assert "encerrado com sucesso" in res_csat["reply"]
+    assert res_csat["action"] == "CLOSE_CHAT"
+    assert "🔄 Novo Atendimento" in res_csat["options"]
+
+    # Step 8: Next casual message in closed state
+    res_closed = agent.run("obrigado e tchau", session_id=sess_id)
+    assert res_closed["model_used"] == "direct_attendance_closed"
+    assert "encerrado com sucesso" in res_closed["reply"]
+
+
+def test_support_return_and_regret_policy_not_intercepted_by_order_tracking(multi_agent_db: Path) -> None:
+    """
+    Ensure inquiries regarding return policies, right of regret, exchanges, or defects
+    are properly routed and answered with store policies (Section 4 & CDC)
+    instead of being intercepted by order tracking just because they mention 'minha compra' or 'meu pedido'.
+    """
+    agent = AssistantAgent(db_path=multi_agent_db)
+    sess_id = "test_support_return_policy_session"
+
+    # Step 1: Identify customer Lucas Mendes da Silva (has delivered Order #4)
+    r1 = agent.run("67 99812-3456", session_id=sess_id)
+    assert "Lucas Mendes da Silva" in r1["reply"]
+
+    # Step 2: Customer asks about right of regret and return
+    r2 = agent.run("Me arrependi da minha compra, posso devolver meu pedido?", session_id=sess_id)
+    assert r2["active_agent"] == "support"
+    assert r2["model_used"] == "direct_store_policy"
+    # Verify policy contents are explained
+    assert "7 (sete) dias" in r2["reply"] or "7 dias" in r2["reply"]
+    assert "Código de Defesa do Consumidor" in r2["reply"] or "CDC" in r2["reply"]
+    assert "Frete de Devolução" in r2["reply"] or "frete de devolução" in r2["reply"]
+    assert "reembolso" in r2["reply"].lower()
+    assert "embalagem original" in r2["reply"].lower()
+    # Identifies his delivered Order #4
+    assert "Pedido #4" in r2["reply"]
+    assert "Giannini" in r2["reply"]
+    # Ensure it's not the generic tracking table
+    assert "Status do seu Pedido — Empório da Música" not in r2["reply"]
+
+    # Step 3: Customer asks specifically about order tracking
+    r3 = agent.run("quero ver meus pedidos", session_id=sess_id)
+    assert r3["active_agent"] == "support"
+    assert r3["model_used"] == "direct_order_tracking"
+    assert "Status do seu Pedido — Empório da Música" in r3["reply"]
+    assert "Pedido #4" in r3["reply"]
+
+
+
 
 
 

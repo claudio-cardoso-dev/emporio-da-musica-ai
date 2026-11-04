@@ -24,3 +24,4 @@ htmlcov/
 Thumbs.db
 .vscode/
 .idea/
+scratch_*.py

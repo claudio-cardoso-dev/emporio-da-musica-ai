@@ -185,8 +185,16 @@ class AssistantAgent:
         lang = detect_user_language(user_message)
         stripped = (user_message or "").strip()
 
-        # 1. Empty or ultra-short non-word noise
+        # Single digit response (e.g. CSAT rating 1-5, interactive menu options 1, 2, 3)
         alnum_chars = re.sub(r"[^a-zA-Z0-9]", "", stripped)
+        if stripped in ("1", "2", "3", "4", "5") or (len(alnum_chars) == 1 and alnum_chars.isdigit()):
+            return {
+                "is_clear": True,
+                "confidence": 1.0,
+                "language": lang,
+            }
+
+        # 1. Empty or ultra-short non-word noise
         if len(alnum_chars) < 2:
             return {
                 "is_clear": False,
@@ -203,8 +211,9 @@ class AssistantAgent:
         digits = re.sub(r"\D", "", stripped)
         if words:
             vowel_words = [w for w in words if any(ch in vowels for ch in w)]
+            total_vowels_first = sum(1 for ch in words[0] if ch in vowels)
             if len(vowel_words) == 0 or (
-                len(words) == 1 and len(words[0]) > 6 and len(set(words[0]).intersection(vowels)) <= 1
+                len(words) == 1 and len(words[0]) > 6 and total_vowels_first <= 1
             ):
                 return {
                     "is_clear": False,
@@ -1956,8 +1965,13 @@ class AssistantAgent:
                 final_lines.append(f"\n🚚 Seu pedido será despachado via transportadora parceira. Enviaremos o código de rastreamento no seu WhatsApp/Telefone ({cust_phone or 'cadastrado'}).")
 
             final_lines.append("\nAgradecemos por comprar na **Empório da Música**! Sua música começa aqui! 🎶✨")
+            final_lines.append(
+                "\n---\n"
+                "⭐ **Pesquisa de Satisfação:**\n"
+                f"**{cust_name}**, como você avalia o nosso atendimento hoje? (Por favor, selecione ou digite uma nota de **1 a 5**, onde 1 é insatisfeito e 5 é excelente):"
+            )
 
-            sess["stage"] = "CHECKOUT_COMPLETED"
+            sess["stage"] = "SATISFACTION_SURVEY"
             return {
                 "reply": "\n".join(final_lines),
                 "language": detected_lang,
@@ -1967,9 +1981,105 @@ class AssistantAgent:
                 "products": [],
                 "active_agent": "checkout",
                 "action": "CLEAR_CART",
+                "options": [
+                    "⭐ 1 (Ruim)",
+                    "⭐ 2 (Regular)",
+                    "⭐ 3 (Bom)",
+                    "⭐ 4 (Muito bom)",
+                    "⭐ 5 (Excelente)",
+                ],
+                "logged_failed_intent": False,
+            }
+
+        # 10.8. Customer Satisfaction Survey Response (CSAT 1-5) & Attendance Conclusion
+        if sess.get("stage") == "SATISFACTION_SURVEY":
+            cust = sess.get("customer") or {}
+            cust_name = cust.get("name", "Cliente")
+
+            if any(w in norm_user_msg for w in ["novo atendimento", "reiniciar", "outro atendimento", "novo pedido"]):
+                sess["stage"] = "SHOPPING"
+                sess["cart_items"] = []
+                sess["cart_total"] = 0.0
+                sess["payment_method"] = None
+                return {
+                    "reply": f"Com certeza, **{cust_name}**! Vamos iniciar um novo atendimento. Como posso te ajudar hoje? 🎸🎶",
+                    "language": detected_lang,
+                    "confidence": 1.0,
+                    "model_used": "direct_new_attendance",
+                    "tools_called": [],
+                    "products": [],
+                    "active_agent": "catalog",
+                    "action": "CLEAR_CART",
+                    "options": ["🎸 Violões até R$1000", "🌴 Ver Ukuleles", "🔥 Produtos em Promoção"],
+                    "logged_failed_intent": False,
+                }
+
+            # Extract rating 1-5 or descriptive sentiment
+            rating = None
+            m_digit = re.search(r"\b([1-5])\b", norm_user_msg)
+            if m_digit:
+                rating = int(m_digit.group(1))
+            elif any(w in norm_user_msg for w in ["excelente", "otim", "maravilh", "perfeit", "adorei", "show", "nota dez", "dez"]):
+                rating = 5
+            elif any(w in norm_user_msg for w in ["muito bom", "muito boa"]):
+                rating = 4
+            elif any(w in norm_user_msg for w in ["bom", "boa"]):
+                rating = 3
+            elif any(w in norm_user_msg for w in ["regular", "medio", "mais ou menos"]):
+                rating = 2
+            elif any(w in norm_user_msg for w in ["ruim", "pessim", "horrivel"]):
+                rating = 1
+
+            sess["csat_rating"] = rating or 5
+            sess["stage"] = "ATTENDANCE_CLOSED"
+
+            star_display = f" ({rating} ⭐)" if rating else ""
+            reply_text = (
+                f"🙏 **Agradecemos muito pela sua avaliação{star_display}, {cust_name}!** 🎸✨\n\n"
+                "Sua avaliação foi registrada com sucesso e é fundamental para continuarmos aprimorando nosso atendimento e oferecendo os melhores instrumentos musicais.\n\n"
+                "O seu atendimento foi **concluído e encerrado com sucesso**. Agradecemos pela preferência e confiança na **Empório da Música** (*Sua música começa aqui!*).\n\n"
+                "Tenha um excelente dia e aproveite muito seu novo instrumento musical! Até logo! 👋🎶"
+            )
+
+            return {
+                "reply": reply_text,
+                "language": detected_lang,
+                "confidence": 1.0,
+                "model_used": "direct_csat_closure",
+                "tools_called": [],
+                "products": [],
+                "active_agent": "checkout",
+                "action": "CLOSE_CHAT",
                 "options": ["🔄 Novo Atendimento", "📍 Informações da Loja"],
                 "logged_failed_intent": False,
             }
+
+        if sess.get("stage") == "ATTENDANCE_CLOSED":
+            cust = sess.get("customer") or {}
+            cust_name = cust.get("name", "Cliente")
+
+            if any(w in norm_user_msg for w in ["novo", "reiniciar", "comecar", "outro", "comprar", "violao", "guitarra", "ukulele", "catalogo", "ver", "ola", "oi", "quero"]):
+                sess["stage"] = "SHOPPING"
+                sess["cart_items"] = []
+                sess["cart_total"] = 0.0
+                sess["payment_method"] = None
+                # Allow proceeding to shopping or normal catalog routing below
+            else:
+                return {
+                    "reply": (
+                        f"O seu atendimento anterior foi encerrado com sucesso, **{cust_name}**! 😊\n\n"
+                        "Se desejar iniciar uma nova consulta, explorar novos instrumentos ou tirar dúvidas, basta clicar em **Novo Atendimento** abaixo! 🎸"
+                    ),
+                    "language": detected_lang,
+                    "confidence": 1.0,
+                    "model_used": "direct_attendance_closed",
+                    "tools_called": [],
+                    "products": [],
+                    "active_agent": "checkout",
+                    "action": None,
+                    "options": ["🔄 Novo Atendimento", "🎸 Ver Catálogo", "📍 Informações da Loja"],
+                    "logged_failed_intent": False,
+                }
 
         # 11. Route to dedicated Specialist Agent
         stage = IntentRouter.classify_stage(user_message=user_message, chat_history=history)

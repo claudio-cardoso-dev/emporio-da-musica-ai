@@ -6,10 +6,65 @@
 ![Architecture](https://img.shields.io/badge/Architecture-Specialist%20Multi--Agent-6366F1)
 ![Database](https://img.shields.io/badge/Database-SQLite%20%2B%20Hybrid%20RAG-003B57?logo=sqlite&logoColor=white)
 ![APIs](https://img.shields.io/badge/Integrations-ViaCEP%20%2B%20PIX%20SVG-059669)
-![Pytest](https://img.shields.io/badge/Tests-105%20Passed-10B981?logo=pytest&logoColor=white)
+![Pytest](https://img.shields.io/badge/Tests-109%20Passed-10B981?logo=pytest&logoColor=white)
 
 > **Assistente Conversacional de E-commerce com IA & Arquitetura Multiagente Especializada**  
 > Desenvolvido para a **Empório da Música** (*"Sua música começa aqui"* — Campo Grande/MS), fundamentado em **Clean Architecture, SOLID, Function Calling Nativo, RAG Semântico Híbrido, Motor Financeiro Determinístico e Interface Conversacional Glassmorphism**.
+
+---
+
+## ⚡ Guia Rápido do Avaliador (Quick Start em 3 Minutos)
+
+Se você é o avaliador técnico e deseja testar o sistema imediatamente, siga estes passos:
+
+### 1. Clonar, Instalar e Iniciar o Servidor
+
+```bash
+# 1. Clone o repositório e acesse a pasta
+git clone <URL_DO_REPOSITORIO>
+cd emporio-da-musica-ai
+
+# 2. Crie e ative o ambiente virtual
+python -m venv .venv
+# Windows (PowerShell):
+.\.venv\Scripts\Activate.ps1
+# Linux / macOS:
+source .venv/bin/activate
+
+# 3. Instale as dependências
+pip install -r requirements.txt
+
+# 4. Configure o .env com sua chave Groq (gratuita em console.groq.com)
+cp .env.example .env
+# Certifique-se de que GROQ_API_KEY=gsk_... está preenchida no arquivo .env
+
+# 5. Inicie a aplicação no modo API (com Web Chat Glassmorphism)
+python main.py --mode api --port 8000
+```
+
+Abra no seu navegador: **[`http://localhost:8000`](http://localhost:8000)**  
+(Documentação interativa Swagger disponível em **[`http://localhost:8000/docs`](http://localhost:8000/docs)**)
+
+---
+
+### 2. Roteiro de Teste Interativo (Prompts Prontos para Copiar e Colar)
+
+Para validar todos os critérios do desafio de ponta a ponta na Web UI, utilize os seguintes exemplos:
+
+| Passo / Funcionalidade | O que digitar no chat | O que o sistema faz / validação esperada |
+| :--- | :--- | :--- |
+| **1. Identificação Segura (LGPD)** | `(67) 99812-3456` | Reconhece **Lucas Mendes da Silva**, dá as boas-vindas calorosas e sugere botões de ação rápida. |
+| **2. Consulta de Catálogo com Filtro** | `quero ver violões até 1000 reais` | Aciona o `CatalogAgent`, busca no SQLite e exibe os cards 3D de violões disponíveis até R$ 1.000,00 com botão de adicionar ao carrinho. |
+| **3. Busca Abrangente (sem truncamento)** | `quero ver produtos até 2000 reais` | Retorna **todos os 37 instrumentos** cadastrados até R$ 2.000,00 (de R$ 159,90 a R$ 1.967,18), sem truncamento prematuro de 15 itens. |
+| **4. Tratamento de Item Indisponível** | `tem pandeiro?` | Informa cordialmente que a loja foca em instrumentos de cordas, teclas e sopros, **sem alucinar estoque nem poluir a tela com carrosséis aleatórios**. |
+| **5. Card 3D e Amostra Sonora** | *Clique no botão 🎧 Amostra Sonora ou 📖 Descrição no card* | O card gira em 3D revelando o player de áudio com timbre do instrumento e modal com especificações detalhadas de madeira e acabamento. |
+| **6. Adição ao Carrinho e Fechamento** | `adicionar 1 Giannini GF-1R ao carrinho` e depois `fechar meu pedido` | Transiciona para o `CheckoutAgent`. Mostra o resumo do carrinho e solicita confirmação do endereço cadastrado. |
+| **7. Confirmação de Endereço** | `Sim, endereço correto` | Valida endereço e calcula frete determinístico (Grátis para Campo Grande acima de R$ 500; taxa fixa de R$ 35 abaixo de R$ 500). Apresenta as opções de pagamento. |
+| **8. Simulação de Pagamento (PIX)** | `⚡ Pagar no PIX (5% off)` *(ou "no pix")* | Aplica 5% de desconto à vista, gera o payload PIX Copia-e-Cola e renderiza o **QR Code dinâmico em SVG**, apresentando a tela de conferência final. |
+| **9. Confirmação do Pedido** | `Sim, confirmar pedido` | Registra o pedido com sucesso, confirma agendamento do motoboy próprio e **dispara a Pesquisa de Satisfação (CSAT) de 1 a 5**. |
+| **10. Pesquisa de Satisfação (CSAT)** | `⭐ 5 (Excelente)` *(ou digite "5")* | Registra a nota, envia mensagem de agradecimento humanizada, conclui o atendimento e bloqueia o campo com botão `[ 🔄 Novo Atendimento ]`. |
+| **11. Direito de Arrependimento e Devolução** | `Me arrependi da minha compra, posso devolver meu pedido?` | Identifica a intenção de pós-venda (`SupportAgent`). Explica a **Seção 4.1 das Políticas da Loja e o CDC**: prazo de 7 dias, frete 100% gratuito pela loja, reembolso em até 10 dias úteis e identifica o Pedido #4 entregue. |
+| **12. Rastreamento Determinístico** | `quero ver meus pedidos` | Consulta o banco relacional SQLite e exibe os dados do Pedido #4 com código de rastreamento `BRQM7890123BR`, previsão e status de entrega. |
 
 ---
 
@@ -29,10 +84,12 @@ Este projeto entrega uma solução pronta para produção que soluciona o desafi
 4. **Resiliência de LLM (Multi-Model Fallback Chain):** Inferência de ultra-baixa latência via **Groq API** com **Qwen (`qwen/qwen3.8-27b`) como primário**, garantindo raciocínio ágil em português brasileiro, com *fallback* automático em cascata (`openai/gpt-oss-120b` $\rightarrow$ `openai/gpt-oss-20b`) contra oscilações de conexão ou *rate limits*.
 5. **Experiência Conversacional de Alto Padrão (Glassmorphism Web UI):**
    - Cards 3D interativos com rotação frente/verso (*flip card*) exibindo especificações de madeira, tampo e acabamento.
+   - Player de áudio com simulação de timbre real do instrumento.
    - Seletores de quantidade (`-` / `+`) e adição direta ao carrinho no chat.
    - Formulários modais e inline integrados com consulta instantânea de CEP.
    - Comunicação humanizada: sem jargões técnicos de frontend (substituindo termos como "carrossel" por *"confira abaixo a lista de opções disponíveis..."*).
    - Fluxo de checkout em duas etapas: seleção do método/parcelas $\rightarrow$ tela de conferência final com botões de confirmação (`Sim, confirmar pedido` / `Não, alterar pagamento`).
+   - Pesquisa de Satisfação (CSAT) pós-pedido de 1 a 5 com encerramento formal do chat.
 
 ---
 
@@ -77,7 +134,7 @@ flowchart TD
 
 ```text
 📦 emporio-da-musica-ai
- ┣ 📂 data/                          # Dados operacionais (6 CSVs + PDF de Políticas)
+ ┣ 📂 data/                          # Dados operacionais (6 CSVs originais + PDF de Políticas)
  ┣ 📂 docs/
  ┃ ┣ 📂 examples/                    # 5 Transcrições reais multi-turno (.md)
  ┃ ┗ 📜 generate_examples.py         # Script de geração dos cenários de teste
@@ -108,7 +165,7 @@ flowchart TD
  ┃   ┣ 📜 chat_service.py            # Persistência de sessões e histórico de mensagens
  ┃   ┣ 📜 pix_service.py             # Geração de payload PIX Copia-e-Cola e QR Code dinâmico em SVG
  ┃   ┗ 📜 pricing_service.py         # Cálculos de desconto PIX (5%), parcelas e frete por localidade
- ┣ 📂 tests/                         # Suíte automatizada com 97 testes (Unitários, RAG, API e E2E)
+ ┣ 📂 tests/                         # Suíte automatizada com 109 testes (Unitários, RAG, API e E2E)
  ┣ 📜 .env.example                   # Modelo de configuração de ambiente
  ┣ 📜 main.py                        # Ponto de entrada unificado (--mode cli ou --mode api)
  ┣ 📜 pyproject.toml                 # Configuração de build e testes
@@ -117,45 +174,19 @@ flowchart TD
 
 ---
 
-## 🎯 Diferenciais Técnicos e Regras de Negócio Implementadas
+## 🎯 Requisitos do Desafio Técnico e Implementação
 
-### 1. Segurança Cadastral e Conformidade com a LGPD
-- **Autenticação por Chave Primária:** Acesso a pedidos e dados cadastrais exige confirmação estrita de telefone ou e-mail registrado.
-- **Tratamento de Homônimos:** Em clientes com nomes idênticos (ex.: "Bruno"), o sistema nunca expõe dados privados de terceiros e mascara e-mails (`bru***@jmail.com`).
-- **Termo de Consentimento:** Fluxo de novos clientes apresenta termo explícito de aceite antes da coleta de dados.
-
-### 2. Integração ViaCEP com Autocompletação de Endereço
-- O serviço [`CepService`](src/services/cep_service.py) consulta a API dos Correios/ViaCEP em tempo real, resolvendo logradouro, bairro, cidade e UF automaticamente.
-- Inclui *fallback* local pré-carregado para municípios do Mato Grosso do Sul (ex.: Campo Grande, Dourados, Três Lagoas), garantindo disponibilidade mesmo em caso de lentidão externa.
-
-### 3. Simulação Visual de Pagamento PIX e Status Pró-ativo
-- O serviço [`PixService`](src/services/pix_service.py) gera payloads padronizados no padrão EMVCo e renderiza o QR Code diretamente em SVG no corpo da mensagem.
-- Ao concluir o pedido, o assistente notifica o cliente de que a equipe da loja entrará em contato via WhatsApp para passar o status do envio assim que o pagamento for compensado bancariamente.
-
-### 4. Transparência de Preços e Promoções Expiradas
-- O catálogo avalia rigorosamente a vigência de promoções (`is_active = 1`). Caso uma promoção esteja expirada (como no caso do *Takamine GD20*), o assistente informa com total clareza que o desconto anterior expirou, informa o preço de tabela e oferece a opção de 5% de desconto à vista via PIX.
-- Aplicação determinística da regra de não-cumulatividade: itens com promoção já ativa não recebem o desconto extra de PIX.
-
-### 5. Checkout em Duas Etapas e Simulação Segura de Pagamento
-- **Fluxo Estruturado:** Ao fechar o carrinho, o assistente valida o endereço cadastrado (com opção de atualização imediata via formulário/ViaCEP) e apresenta todas as opções da Seção 3 das Políticas da Loja: PIX com 5% de desconto, Boleto Bancário (3 dias úteis), Cartão de Débito, Pagamento Combinado e Cartão de Crédito sem juros.
-- **Regras Estritas de Parcelamento:** As opções de parcelas respeitam as políticas da loja (mínimo de R$ 50,00 para até 3x; R$ 80,00 de 4x a 6x; e R$ 100,00 de 7x a 12x sem juros).
-- **Resumo Final Intermediário:** Ao escolher o método ou número de parcelas, o sistema gera uma tela de conferência detalhada com itens, frete, endereço e condição de pagamento, exigindo confirmação explícita (`Sim, confirmar pedido` / `Não, alterar pagamento`) antes de registrar o pedido.
-- **Segurança e Privacidade (LGPD):** A simulação é autenticada internamente sem necessidade de o cliente fornecer dados confidenciais de cartão (número, CVV ou senhas) no chat.
-
-### 6. Processamento Natural em Texto Livre e Continuidade de Contexto do LLM
-- **Sincronização Bidirecional e Mapeamento Semântico Completo:** O cliente pode interagir livremente por botões interativos ou texto livre em qualquer ponto da jornada (ex.: *"quero fechar o pedido"*, *"está correto"*, *"tá certo pode mandar nesse"*, *"vou de pix"*, *"quero parcelar no cartão"*, *"em 8x"*, *"pode confirmar"*, *"tudo certo pode finalizar"*). O payload do carrinho permanece sincronizado em tempo real entre o frontend e a sessão de backend.
-- **Injeção de Contexto Rico para o Modelo de Linguagem (LLM Continuity Directive):** Durante a orquestração multiagente, o estado da sessão (cliente identificado, itens do carrinho, valor total, endereço e estágio atual) é injetado diretamente no prompt de sistema dos agentes especialistas com diretiva estrita de continuidade conversacional. Assim, caso o cliente faça perguntas contextuais no meio do processo (ex.: prazos, garantia ou regulagem), o LLM compreende a história completa e conduz o atendimento sem perda de estado.
-
-### 7. Consulta Determinística de Rastreamento e Histórico de Pedidos (`SupportAgent`)
-- **Detecção Abrangente de Intenções:** Roteamento prioritário em `IntentRouter` para variações no singular e plural (*"quero ver meus pedidos"*, *"consultar meus pedidos"*, *"minhas compras"*, *"pedidos anteriores"*, *"histórico de pedidos"*, *"status do pedido"*, *"onde está meu rastreio"*).
-- **Validação de Titularidade (LGPD) e Resposta Fidedigna:** O bot consulta o banco relacional SQLite via `check_order_status`. Se o cliente autenticado possuir pedidos (ex.: *Ana Carolina Ferreira* com o Pedido #8), exibe o status detalhado, itens, valor, código de rastreamento (`BRJL5544332BR`) e previsão de entrega sem poluir a tela com carrosséis. Se o cliente não possuir pedidos vinculados (ex.: *Fernanda Almeida*), informa com total clareza e transparência que não há pedidos vinculados à conta, oferecendo opções de consulta por outro contato ou exploração do catálogo, prevenindo qualquer alucinação de ausência de suporte.
-
-### 8. Busca Ampla do Catálogo e Paginação Inteligente (`CatalogAgent`)
-- **Remoção de Truncamento Prematuro:** O limite padrão de busca em `ProductRepository` e `search_instruments` foi ampliado de 15 para **60 itens** (cobrindo todo o acervo ativo de 61 produtos da loja). Consultas abrangentes como *"quero ver produtos até 2000 reais"* agora retornam **todos os 37 instrumentos** disponíveis nessa faixa (de R$ 159,90 até R$ 1.967,18, incluindo violões Crafter, Yamaha APX, ukuleles barítonos e teclados), sem cortar a exibição nos itens mais baratos.
-- **Eficiência de Tokens (Groq TPM Guard):** Compactação inteligente de payload em `make_llm_tool_payload`, enviando uma amostra representativa de 10 itens para a síntese textual da LLM, enquanto entrega todos os 37 cards estruturados ao carrossel interativo do frontend.
-
-### 9. Normalização Flexível de Contatos Telefônicos
-- **Tratamento Resiliente de Formatos:** O `CustomerRepository` e o orquestrador aceitam números digitados com ou sem máscara, com ou sem DDD, e com ou sem hífens (ex.: `6799123-0123`, `(67) 99123-0123`, `99123-0123`), evitando bloqueios indevidos no guardrail de baixa confiança e garantindo identificação instantânea.
+| Requisito do Desafio | Implementação no Projeto | Evidência / Validação Técnica |
+| :--- | :--- | :--- |
+| **1. Arquitetura Multiagente Especializada** | `IntentRouter` mapeia dinamicamente os turnos para `CustomerAgent`, `CatalogAgent`, `CheckoutAgent` e `SupportAgent`. | Ferramentas estritamente restritas por agente (`allowed_tool_names`), prevenindo vazamento de escopo. |
+| **2. Ingestão de Dados e Integridade Relacional** | Pipeline ETL idempotente (`src/db/ingestion.py`) que popula o SQLite a partir dos 6 CSVs oficiais (clientes, produtos, categorias, promoções, pedidos e itens). | 50 clientes originais do seed mantidos estritamente sem adulteração. Testes em `tests/test_ingestion_and_db.py`. |
+| **3. RAG das Políticas da Loja** | Parser estruturado de `data/políticas_da_loja.pdf` com BM25 + Similaridade Fuzzy + Expansão Conceitual multilíngue (Seções 1 a 10). | 26 testes cobrindo todas as 10 seções do manual (`tests/test_rag_policies.py`). |
+| **4. Motor Financeiro Determinístico** | `PricingService` calcula parcelas (mínimos de R$ 50, R$ 80 e R$ 100), desconto de 5% no PIX e regras de não-cumulatividade com promoções. | Resolução matemática pura, sem delegação de cálculo financeiro a modelos probabilísticos. |
+| **5. Regras de Frete Local e Regional** | Frete Grátis acima de R$ 500 para Campo Grande/MS via motoboy próprio; taxa fixa de R$ 35 abaixo de R$ 500; PAC/SEDEX/Jadlog com seguro para outras regiões. | Seção 5 das políticas estritamente cumprida e validada nos testes automatizados. |
+| **6. Políticas de Troca e Direito de Arrependimento** | `SupportAgent` prioriza consultas sobre devolução e arrependimento (Seção 4.1 / Art. 49 CDC): 7 dias, frete reverso gratuito e estorno em até 10 dias úteis. | Não é interceptado por rastreio de pedido. Testado em `test_support_return_and_regret_policy_not_intercepted_by_order_tracking`. |
+| **7. Pesquisa de Satisfação (CSAT 1 a 5)** | Após o checkout bem-sucedido, o bot dispara pesquisa com botões de 1 a 5 estrelas (`⭐ 1` a `⭐ 5`). Ao responder, agradece e fecha o atendimento. | Transição de estado para `SATISFACTION_SURVEY` e ação `CLOSE_CHAT` implementada. |
+| **8. Interface Conversacional de Alto Padrão** | Web Chat Glassmorphism responsivo com cards 3D interativos, rotação frente/verso, player de amostra sonora e formulário de endereço com autocompletar de CEP. | Renderização instantânea sem lentidão e sem jargões de frontend ("carrossel"). |
+| **9. Observabilidade e Auditoria** | Tabela `failed_intents` registra mensagens de baixa confiança (`confidence < 0.65`) ou ruídos para melhoria contínua. | Endpoint `/api/intents/failed` e comando CLI `/failed` disponíveis para inspeção. |
 
 ---
 
@@ -207,6 +238,7 @@ python main.py --mode api --port 8000
 ```
 - **Web Chat UI:** Abra [`http://localhost:8000`](http://localhost:8000) no seu navegador para utilizar o chat completo com cards 3D interativos e carrinho integrado.
 - **Documentação Interativa Swagger:** Acesse [`http://localhost:8000/docs`](http://localhost:8000/docs).
+- **Healthcheck da Aplicação:** Acesse [`http://localhost:8000/health`](http://localhost:8000/health).
 
 #### Modo Terminal (Rich CLI)
 ```bash
@@ -220,20 +252,25 @@ python main.py --mode cli
 
 ---
 
-## 🧪 Suíte de Testes Automatizados (105 Testes)
+## 🧪 Suíte de Testes Automatizados (109 Testes)
 
 A suíte de testes do projeto garante 100% de confiabilidade em todas as camadas da aplicação:
-- Ingestão de banco de dados e integridade referencial dos CSVs.
-- Regras financeiras e de cálculo de frete (`PricingService`).
-- Cobertura exaustiva das 10 seções do PDF de políticas da loja (RAG Semântico).
-- Roteamento multiagente e transições de estado (`IntentRouter`).
-- Sanitização de terminologia e proibição da palavra carrossel (`clean_carousel_mentions`).
-- Endpoints FastAPI, consultas ViaCEP e geração de QR Code PIX.
-- Testes E2E de jornada completa do cliente.
+- Ingestão de banco de dados e integridade referencial dos CSVs (`tests/test_ingestion_and_db.py`).
+- Regras financeiras e de cálculo de frete (`tests/test_pricing_and_rules.py`).
+- Cobertura exaustiva das 10 seções do PDF de políticas da loja (`tests/test_rag_policies.py`).
+- Roteamento multiagente e transições de estado (`tests/test_multi_agent.py`).
+- Sanitização de terminologia e proibição da palavra carrossel (`tests/test_agent_tools.py`).
+- Endpoints FastAPI, consultas ViaCEP e geração de QR Code PIX (`tests/test_api_interface.py`).
+- Testes E2E de jornada completa do cliente (`tests/test_e2e_scenarios.py`).
 
 Para executar todos os testes:
 ```bash
-pytest -v
+python -m pytest -v
+```
+
+Resultado obtido:
+```text
+====================== 109 passed, 3 warnings in 23.55s =======================
 ```
 
 ---
@@ -256,5 +293,5 @@ O repositório inclui 5 transcrições de conversas multi-turno cobrindo os cen�
 - **Framework Web & API:** FastAPI, Uvicorn, Pydantic v2
 - **Provedor de IA & Modelos:** Groq API (`qwen/qwen3.8-27b`, `openai/gpt-oss-120b`, `openai/gpt-oss-20b`)
 - **Acesso a Dados & RAG:** SQLite 3, BM25 (`rank-bm25`), RapidFuzz, pypdf
-- **Interface & Terminal:** Vanilla JS (Glassmorphism UI, CSS 3D Transforms, SVG), Rich CLI
+- **Interface & Terminal:** Vanilla JS (Glassmorphism UI, CSS 3D Transforms, Web Audio API, SVG), Rich CLI
 - **Qualidade & Testes:** Pytest, AnyIO, Starlette TestClient

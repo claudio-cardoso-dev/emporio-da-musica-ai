@@ -1238,6 +1238,8 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
                 showCartInChat();
               } else if (clean.includes("continuar comprando") || clean.includes("ver mais produtos")) {
                 sendQuick("Quero ver mais instrumentos musicais");
+              } else if (clean.includes("novo atendimento") || clean.includes("reiniciar")) {
+                resetChat();
               } else {
                 sendQuick(optText);
               }
@@ -1486,6 +1488,12 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
 
       const lower = text.toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").trim();
 
+      // Intercept Novo Atendimento / Reiniciar
+      if (lower === "novo atendimento" || lower === "reiniciar" || lower === "iniciar novo atendimento") {
+        await resetChat();
+        return;
+      }
+
       // Intercept Clear Cart
       if (lower === "esvaziar carrinho" || lower === "limpar carrinho" || lower === "remover itens do carrinho" || lower === "apagar carrinho") {
         appendMsg(text, "user");
@@ -1560,6 +1568,9 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
           cart = [];
           updateCartUI();
         }
+        if (data.action === "CLOSE_CHAT" || data.model_used === "direct_csat_closure") {
+          finalizeChatUI();
+        }
         appendMsg(data.reply, "bot", data);
       } catch (e) {
         appendMsg("Erro ao comunicar com o servidor.", "bot");
@@ -1575,6 +1586,20 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       sendQuick("Qual o endereço e horário de funcionamento da loja?");
     }
 
+    function finalizeChatUI() {
+      inputEl.disabled = true;
+      inputEl.value = "";
+      inputEl.placeholder = "Atendimento finalizado com sucesso. Obrigado!";
+      inputEl.style.opacity = "0.7";
+      inputEl.style.cursor = "not-allowed";
+      const sendBtn = document.querySelector(".btn-send");
+      if (sendBtn) {
+        sendBtn.disabled = true;
+        sendBtn.style.opacity = "0.5";
+        sendBtn.style.cursor = "not-allowed";
+      }
+    }
+
     async function resetChat() {
       await fetch("/api/session/reset", {
         method: "POST",
@@ -1583,6 +1608,16 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
       });
       cart = [];
       updateCartUI();
+      inputEl.disabled = false;
+      inputEl.style.opacity = "";
+      inputEl.style.cursor = "";
+      inputEl.placeholder = "Digite sua mensagem em Português, Inglês ou Espanhol...";
+      const sendBtn = document.querySelector(".btn-send");
+      if (sendBtn) {
+        sendBtn.disabled = false;
+        sendBtn.style.opacity = "";
+        sendBtn.style.cursor = "";
+      }
       messagesEl.innerHTML = '<div class="msg-wrapper"><div class="msg bot"><div class="md-content">Olá! Seja muito bem-vindo(a) à <strong>Empório da Música</strong>! 🎸🎶<br/><br/>Sou seu assistente virtual. Para começarmos o seu atendimento e identificarmos seu cadastro, por favor informe o seu <strong>número de telefone/WhatsApp</strong> ou <strong>e-mail</strong>.</div></div></div>';
       const chipsEl = document.getElementById("chipsContainer");
       if (chipsEl) {
@@ -1805,6 +1840,9 @@ WEB_CHAT_HTML = """<!DOCTYPE html>
         } else if (data.action === "CLEAR_CART" || data.model_used === "direct_checkout_confirmed") {
           cart = [];
           updateCartUI();
+        }
+        if (data.action === "CLOSE_CHAT" || data.model_used === "direct_csat_closure") {
+          finalizeChatUI();
         }
         appendMsg(data.reply, "bot", data);
       } catch (e) {
